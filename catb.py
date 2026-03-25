@@ -4,12 +4,14 @@ import numpy as np
 import plotly.express as px
 from io import BytesIO
 
+
 st.set_page_config(
     page_title="CATB Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 
 st.markdown("""
 <style>
@@ -99,11 +101,13 @@ section[data-testid="stSidebar"] * {
 </style>
 """, unsafe_allow_html=True)
 
+
 EXPECTED_DATE_COLS = ["Reg Date", "tbdiagnosisdate"]
-FACILITY_CANDIDATES = ["HWC ID", "Facility", "HWC Name", "Subcenter"]
+FACILITY_CANDIDATES = ["Facility Name", "Facility", "HWC", "Subcenter", "HWC ID"]
 BLOCK_CANDIDATES = ["Block"]
 DISTRICT_CANDIDATES = ["District"]
 CHO_CANDIDATES = ["CHO name"]
+
 
 @st.cache_data
 def load_excel(uploaded_file):
@@ -139,21 +143,48 @@ def load_excel(uploaded_file):
 
     return df, sheet_name
 
+
 def find_column(df, candidates):
     for col in candidates:
         if col in df.columns:
             return col
     return None
 
+
+def find_facility_column(df):
+    direct_match = find_column(df, FACILITY_CANDIDATES)
+    if direct_match and direct_match != "HWC ID":
+        return direct_match
+
+    cols = df.columns.tolist()
+
+    if "Block" in cols and "HWC ID" in cols:
+        try:
+            block_idx = cols.index("Block")
+            hwc_idx = cols.index("HWC ID")
+            if hwc_idx - block_idx == 2:
+                inferred_facility_col = cols[block_idx + 1]
+                if inferred_facility_col not in ["Block", "HWC ID"]:
+                    return inferred_facility_col
+        except Exception:
+            pass
+
+    if direct_match:
+        return direct_match
+
+    return None
+
+
 def safe_unique(series):
     return sorted([x for x in series.dropna().astype(str).unique().tolist()])
+
 
 def apply_filters(df):
     filtered = df.copy()
 
     district_col = find_column(filtered, DISTRICT_CANDIDATES)
     block_col = find_column(filtered, BLOCK_CANDIDATES)
-    facility_col = find_column(filtered, FACILITY_CANDIDATES)
+    facility_col = find_facility_column(filtered)
     cho_col = find_column(filtered, CHO_CANDIDATES)
     date_col = "Reg Date" if "Reg Date" in filtered.columns else None
 
@@ -241,17 +272,128 @@ def apply_filters(df):
 
     return filtered, district_col, block_col, facility_col, cho_col, date_col
 
-def to_excel_download(df):
+
+def build_grouped_summary(df, group_col, district_col=None, block_col=None, facility_col=None, cho_col=None):
+    if not group_col or group_col not in df.columns:
+        return pd.DataFrame()
+
+    summary = df.groupby(group_col).size().reset_index(name="Total Records")
+
+    if "Age" in df.columns:
+        age_summary = df.groupby(group_col)["Age"].mean().round(1).reset_index(name="Average Age")
+        summary = summary.merge(age_summary, on=group_col, how="left")
+
+    if district_col and district_col in df.columns and group_col != district_col:
+        district_summary = df.groupby(group_col)[district_col].nunique().reset_index(name="Total Districts")
+        summary = summary.merge(district_summary, on=group_col, how="left")
+
+    if block_col and block_col in df.columns and group_col != block_col:
+        block_summary = df.groupby(group_col)[block_col].nunique().reset_index(name="Total Blocks")
+        summary = summary.merge(block_summary, on=group_col, how="left")
+
+    if facility_col and facility_col in df.columns and group_col != facility_col:
+        facility_summary = df.groupby(group_col)[facility_col].nunique().reset_index(name="Total Facilities")
+        summary = summary.merge(facility_summary, on=group_col, how="left")
+
+    if cho_col and cho_col in df.columns and group_col != cho_col:
+        cho_summary = df.groupby(group_col)[cho_col].nunique().reset_index(name="Total CHOs")
+        summary = summary.merge(cho_summary, on=group_col, how="left")
+
+    if "AI preference" in df.columns:
+        presumptive = (
+            df[df["AI preference"].astype(str).str.lower().eq("presumptive")]
+            .groupby(group_col)
+            .size()
+            .reset_index(name="Presumptive")
+        )
+        summary = summary.merge(presumptive, on=group_col, how="left")
+
+    if "Sent for testing" in df.columns:
+        sent_for_testing = (
+            df[df["Sent for testing"].astype(str).str.lower().eq("yes")]
+            .groupby(group_col)
+            .size()
+            .reset_index(name="Sent for Testing")
+        )
+        summary = summary.merge(sent_for_testing, on=group_col, how="left")
+
+    if "Type" in df.columns:
+        symptomatic = (
+            df[df["Type"].astype(str).str.lower().str.contains("symptomatic", na=False)]
+            .groupby(group_col)
+            .size()
+            .reset_index(name="Symptomatic")
+        )
+        summary = summary.merge(symptomatic, on=group_col, how="left")
+
+    summary = summary.fillna(0)
+
+    for col in ["Total Districts", "Total Blocks", "Total Facilities", "Total CHOs", "Presumptive", "Sent for Testing", "Symptomatic"]:
+        if col in summary.columns:
+            summary[col] = summary[col].astype(int)
+
+    return summary.sort_values("Total Records", ascending=False)
+
+
+def to_excel_download(df, district_col=None, block_col=None, facility_col=None, cho_col=None):
     output = BytesIO()
+
+    block_wise_df = build_grouped_summary(
+        df, block_col,
+        district_col=district_col,
+        block_col=block_col,
+        facility_col=facility_col,
+        cho_col=cho_col
+    ) if block_col else pd.DataFrame()
+
+    facility_wise_df = build_grouped_summary(
+        df, facility_col,
+        district_col=district_col,
+        block_col=block_col,
+        facility_col=facility_col,
+        cho_col=cho_col
+    ) if facility_col else pd.DataFrame()
+
+    cho_wise_df = build_grouped_summary(
+        df, cho_col,
+        district_col=district_col,
+        block_col=block_col,
+        facility_col=facility_col,
+        cho_col=cho_col
+    ) if cho_col else pd.DataFrame()
+
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Filtered_Data")
+        df.to_excel(writer, index=False, sheet_name="Raw Data")
+
+        if not block_wise_df.empty:
+            block_wise_df.to_excel(writer, index=False, sheet_name="Block Wise Data")
+        else:
+            pd.DataFrame({"Message": ["Block column not available in filtered data."]}).to_excel(
+                writer, index=False, sheet_name="Block Wise Data"
+            )
+
+        if not facility_wise_df.empty:
+            facility_wise_df.to_excel(writer, index=False, sheet_name="Facility Wise Data")
+        else:
+            pd.DataFrame({"Message": ["Facility column not available in filtered data."]}).to_excel(
+                writer, index=False, sheet_name="Facility Wise Data"
+            )
+
+        if not cho_wise_df.empty:
+            cho_wise_df.to_excel(writer, index=False, sheet_name="CHO Wise Data")
+        else:
+            pd.DataFrame({"Message": ["CHO column not available in filtered data."]}).to_excel(
+                writer, index=False, sheet_name="CHO Wise Data"
+            )
+
     return output.getvalue()
+
 
 def build_kpis(df, district_col, block_col, facility_col, cho_col):
     total_records = len(df)
     total_districts = df[district_col].nunique() if district_col else 0
     total_blocks = df[block_col].nunique() if block_col else 0
-    total_facilities = df[facility_col].nunique() if facility_col else 0
+    total_facilities = df[facility_col].dropna().astype(str).nunique() if facility_col else 0
     total_chos = df[cho_col].nunique() if cho_col else 0
 
     presumptive = 0
@@ -280,6 +422,7 @@ def build_kpis(df, district_col, block_col, facility_col, cho_col):
         "Average Age": avg_age
     }
 
+
 def plot_time_trend(df, date_col):
     if not date_col or df[date_col].dropna().empty:
         st.info("Date trend not available.")
@@ -303,6 +446,7 @@ def plot_time_trend(df, date_col):
     fig.update_traces(line_color="#1d6fdc", fillcolor="rgba(29,111,220,0.22)")
     fig.update_layout(template="plotly_white", height=380, margin=dict(l=10, r=10, t=50, b=10))
     st.plotly_chart(fig, use_container_width=True)
+
 
 def plot_district_summary(df, district_col):
     if not district_col:
@@ -333,6 +477,7 @@ def plot_district_summary(df, district_col):
         coloraxis_showscale=False
     )
     st.plotly_chart(fig, use_container_width=True)
+
 
 def plot_block_summary(df, block_col):
     if not block_col:
@@ -366,6 +511,7 @@ def plot_block_summary(df, block_col):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
 def plot_facility_summary(df, facility_col):
     if not facility_col:
         st.info("Facility summary not available.")
@@ -397,6 +543,7 @@ def plot_facility_summary(df, facility_col):
         coloraxis_showscale=False
     )
     st.plotly_chart(fig, use_container_width=True)
+
 
 def plot_cho_summary(df, cho_col):
     if not cho_col:
@@ -430,6 +577,7 @@ def plot_cho_summary(df, cho_col):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
 def plot_gender(df):
     if "Gender" not in df.columns:
         st.info("Gender distribution not available.")
@@ -446,6 +594,7 @@ def plot_gender(df):
     )
     fig.update_layout(template="plotly_white", height=380, margin=dict(l=10, r=10, t=50, b=10))
     st.plotly_chart(fig, use_container_width=True)
+
 
 def plot_ai_preference(df):
     if "AI preference" not in df.columns:
@@ -476,6 +625,7 @@ def plot_ai_preference(df):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+
 def plot_age_distribution(df):
     if "Age" not in df.columns or df["Age"].dropna().empty:
         st.info("Age distribution not available.")
@@ -491,6 +641,7 @@ def plot_age_distribution(df):
     fig.update_layout(template="plotly_white", height=380, margin=dict(l=10, r=10, t=50, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
+
 def blockwise_facility_table(df, block_col, facility_col):
     if not block_col or not facility_col:
         st.info("Blockwise facility summary not available.")
@@ -503,6 +654,7 @@ def blockwise_facility_table(df, block_col, facility_col):
         .sort_values("Total Facilities", ascending=False)
     )
     st.dataframe(bf, use_container_width=True, height=420)
+
 
 def district_summary_table(df, district_col, block_col, facility_col):
     if not district_col:
@@ -521,12 +673,14 @@ def district_summary_table(df, district_col, block_col, facility_col):
     result = result.reset_index().sort_values("total_records", ascending=False)
     st.dataframe(result, use_container_width=True, height=420)
 
+
 def show_data_quality(df):
     missing = df.isnull().sum().reset_index()
     missing.columns = ["Column", "Missing Values"]
     missing["Missing %"] = ((missing["Missing Values"] / len(df)) * 100).round(2)
     missing = missing.sort_values("Missing Values", ascending=False)
     st.dataframe(missing, use_container_width=True, height=500)
+
 
 def main():
     st.markdown("""
@@ -640,7 +794,7 @@ def main():
 
             default_visible_columns = [
                 col for col in [
-                    "Reg Date", "State", "District", "Block", "HWC ID", "CHO name",
+                    "Reg Date", "State", "District", "Block", "Facility Name", "HWC ID", "CHO name",
                     "Gender", "Designation", "AI preference", "Ntep result",
                     "Sent for testing", "TB status", "Type", "Age",
                     "ensemblemodelscore", "height", "weight"
@@ -663,13 +817,21 @@ def main():
             )
             st.markdown("</div>", unsafe_allow_html=True)
 
-    download_data = to_excel_download(filtered_df)
+    download_data = to_excel_download(
+        filtered_df,
+        district_col=district_col,
+        block_col=block_col,
+        facility_col=facility_col,
+        cho_col=cho_col
+    )
+
     st.download_button(
         label="Download Filtered Data",
         data=download_data,
         file_name="CATB_Filtered_Data.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
 if __name__ == "__main__":
     main()
