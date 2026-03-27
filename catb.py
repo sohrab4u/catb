@@ -4,13 +4,20 @@ import numpy as np
 import plotly.express as px
 from io import BytesIO
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.platypus import (
-    SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
-)
+REPORTLAB_AVAILABLE = True
+REPORTLAB_IMPORT_ERROR = None
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    )
+except Exception as e:
+    REPORTLAB_AVAILABLE = False
+    REPORTLAB_IMPORT_ERROR = str(e)
 
 
 st.set_page_config(
@@ -227,6 +234,14 @@ div.stButton > button:hover, div.stDownloadButton > button:hover {
     margin: 0;
     color: #47627d;
     font-size: 0.95rem;
+}
+.warning-box {
+    background: #fff8e8;
+    color: #7a5a00;
+    border: 1px solid #f3dd9a;
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -976,6 +991,9 @@ def show_data_quality(df):
 
 
 def make_pdf_table_from_df(df, title, elements, styles, max_rows=25):
+    if not REPORTLAB_AVAILABLE:
+        return
+
     elements.append(Paragraph(title, styles["Heading2"]))
     elements.append(Spacer(1, 0.12 * inch))
 
@@ -1011,6 +1029,9 @@ def make_pdf_table_from_df(df, title, elements, styles, max_rows=25):
 def to_pdf_download(
     df, sheet_name, district_col=None, block_col=None, facility_col=None, cho_col=None, date_col=None
 ):
+    if not REPORTLAB_AVAILABLE:
+        return None
+
     output = BytesIO()
 
     doc = SimpleDocTemplate(
@@ -1131,6 +1152,12 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
+    if not REPORTLAB_AVAILABLE:
+        st.markdown(
+            "<div class='warning-box'><b>PDF export is currently disabled.</b> The app is running normally, but the <code>reportlab</code> package is not installed in this deployment environment.</div>",
+            unsafe_allow_html=True
+        )
+
     uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xls"])
 
     if uploaded_file is None:
@@ -1158,7 +1185,7 @@ def main():
     )
 
     st.markdown(
-        f"<p class='small-note'><b>Note:</b> The dashboard keeps all analysis views, while the filtered Excel/PDF report is designed to reduce repetition and focus on raw data, active status, and top performer summaries.</p>",
+        "<p class='small-note'><b>Note:</b> The dashboard keeps all analysis views, while the filtered Excel/PDF report is designed to reduce repetition and focus on raw data, active status, and top performer summaries.</p>",
         unsafe_allow_html=True
     )
 
@@ -1416,12 +1443,18 @@ def main():
         )
 
     with d2:
-        st.download_button(
-            label="Download Filtered PDF Report",
-            data=pdf_data,
-            file_name="CATB_Filtered_Report.pdf",
-            mime="application/pdf"
-        )
+        if REPORTLAB_AVAILABLE and pdf_data is not None:
+            st.download_button(
+                label="Download Filtered PDF Report",
+                data=pdf_data,
+                file_name="CATB_Filtered_Report.pdf",
+                mime="application/pdf"
+            )
+        else:
+            st.button("PDF Export Unavailable", disabled=True)
+
+    if not REPORTLAB_AVAILABLE:
+        st.caption("To enable PDF export on Streamlit Cloud, add reportlab to your requirements.txt file.")
 
 
 if __name__ == "__main__":
