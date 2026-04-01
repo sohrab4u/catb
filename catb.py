@@ -247,8 +247,9 @@ div.stButton > button:hover, div.stDownloadButton > button:hover {
 """, unsafe_allow_html=True)
 
 
-EXPECTED_DATE_COLS = ["Reg Date", "tbdiagnosisdate"]
-FACILITY_CANDIDATES = ["Facility Name", "Facility", "HWC", "Subcenter", "HWC ID"]
+# Configuration for column detection
+EXPECTED_DATE_COLS = ["Reg Date", "tbdiagnosisdate", "tb_diagnosis_date"]
+FACILITY_CANDIDATES = ["HWC", "Facility Name", "Facility", "Subcenter", "HWC ID"]
 BLOCK_CANDIDATES = ["Block"]
 DISTRICT_CANDIDATES = ["District"]
 CHO_CANDIDATES = ["CHO name"]
@@ -258,9 +259,23 @@ CHO_CANDIDATES = ["CHO name"]
 def load_excel(uploaded_file):
     xls = pd.ExcelFile(uploaded_file)
     sheet_name = xls.sheet_names[0]
-    df = pd.read_excel(uploaded_file, sheet_name=sheet_name)
+    
+    # Read raw to find where headers start
+    df_raw = pd.read_excel(uploaded_file, sheet_name=sheet_name, header=None)
+    
+    header_row_idx = 0
+    # Scan first 20 rows to find a row containing "Reg Date" or "District"
+    for i, row in df_raw.head(20).iterrows():
+        row_values = [str(val).strip().lower() for val in row.dropna()]
+        if any(keyword in row_values for keyword in ["reg date", "district", "block", "hwc"]):
+            header_row_idx = i
+            break
+
+    # Re-read with correct header row
+    df = pd.read_excel(uploaded_file, sheet_name=sheet_name, skiprows=header_row_idx)
     df.columns = [str(c).strip() for c in df.columns]
 
+    # Standardize column types
     for col in EXPECTED_DATE_COLS:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -269,14 +284,11 @@ def load_excel(uploaded_file):
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).str.strip()
             df[col] = df[col].replace({
-                "nan": np.nan,
-                "None": np.nan,
-                "null": np.nan,
-                "": np.nan
+                "nan": np.nan, "None": np.nan, "null": np.nan, "": np.nan
             })
 
     numeric_candidates = [
-        "Age", "ensemblemodelscore", "height", "weight",
+        "Age", "ensemblemodelscore", "ensemble_model_score", "height", "weight",
         "Cough duration", "Fever Duration", "Chest pain duration",
         "Hemoptysis duration", "Loss of appetite duration",
         "Night sweat duration", "Shortness of breath duration",
@@ -1082,7 +1094,7 @@ def to_pdf_download(
 
     preview_cols = [
         col for col in [
-            "Reg Date", "State", "District", "Block", "Facility Name", "HWC ID", "CHO name",
+            "Reg Date", "State", "District", "Block", "Facility Name", "HWC", "CHO name",
             "Gender", "Designation", "AI preference", "Ntep result", "Sent for testing"
         ] if col in df.columns
     ]
@@ -1389,10 +1401,10 @@ def main():
 
             default_visible_columns = [
                 col for col in [
-                    "Reg Date", "State", "District", "Block", "Facility Name", "HWC ID", "CHO name",
+                    "Reg Date", "State", "District", "Block", "HWC", "CHO name",
                     "Gender", "Designation", "AI preference", "Ntep result",
                     "Sent for testing", "TB status", "Type", "Age",
-                    "ensemblemodelscore", "height", "weight"
+                    "ensemble_model_score", "height", "weight"
                 ] if col in filtered_df.columns
             ]
 
