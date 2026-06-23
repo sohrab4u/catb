@@ -419,13 +419,26 @@ if source_file is not None:
             st.plotly_chart(fig_time, use_container_width=True)
 
         # ==========================================
-        # TAB 2: DISTRICT BREAKDOWN
+        # TAB 2: DISTRICT BREAKDOWN (FIXED ERROR LAYER)
         # ==========================================
         with tabs[1]:
             st.markdown("### 🏢 Regional District Standings and Metric Contributions")
             col_d1, col_d2 = st.columns([3, 2])
             with col_d1:
-                st.dataframe(dist_grp.style.background_gradient(cmap='Blues', subset=['Screenings_Count']), use_container_width=True)
+                # FIXED: Switched from .style.background_gradient() to a native Streamlit Progress/Bar configuration to drop the Matplotlib runtime environment requirement.
+                st.dataframe(
+                    dist_grp, 
+                    use_container_width=True,
+                    column_config={
+                        "Screenings_Count": st.column_config.ProgressColumn(
+                            "Screenings Count",
+                            help="Volume of total screening logs compiled per region",
+                            format="%d",
+                            min_value=0,
+                            max_value=int(dist_grp["Screenings_Count"].max() if not dist_grp.empty else 100)
+                        )
+                    }
+                )
             with col_d2:
                 fig_dist = px.bar(dist_grp, x='district', y='Screenings_Count', title="District Output Volumes",
                                   labels={'district': 'District', 'Screenings_Count': 'Screening Counts'},
