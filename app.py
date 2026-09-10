@@ -215,14 +215,23 @@ def parse_nikshay_id(series):
     return series.apply(check_id)
 
 # ==========================================
-# 3. FACILITY ENROLLMENT MASTER INGESTION
+# 3. FACILITY ENROLLMENT MASTER INGESTION (EXCEL & CSV)
 # ==========================================
 @st.cache_data(show_spinner=False)
 def process_facility_enrollment(file_buffer):
     try:
-        xls = pd.ExcelFile(file_buffer, engine='openpyxl')
-        first_sheet = xls.sheet_names[0]
-        df = xls.parse(first_sheet)
+        fname = getattr(file_buffer, 'name', '').lower()
+        if fname.endswith('.csv'):
+            try:
+                df = pd.read_csv(file_buffer, encoding='utf-8')
+            except UnicodeDecodeError:
+                file_buffer.seek(0)
+                df = pd.read_csv(file_buffer, encoding='latin1')
+        else:
+            xls = pd.ExcelFile(file_buffer, engine='openpyxl')
+            first_sheet = xls.sheet_names[0]
+            df = xls.parse(first_sheet)
+
         df.columns = [str(c).strip() for c in df.columns]
 
         col_map = {}
@@ -264,7 +273,7 @@ def process_facility_enrollment(file_buffer):
         return None
 
 # ==========================================
-# 4. SCREENING DATA INGESTION ENGINE
+# 4. SCREENING DATA INGESTION ENGINE (EXCEL & CSV)
 # ==========================================
 @st.cache_data(show_spinner=False)
 def process_health_workbook(file_buffer):
@@ -273,21 +282,47 @@ def process_health_workbook(file_buffer):
     combined_records = []
     
     try:
-        xls = pd.ExcelFile(file_buffer, engine='openpyxl')
-        
-        for sheet in xls.sheet_names:
-            df_check = xls.parse(sheet, nrows=5, header=None)
-            if df_check.empty:
-                continue
-            
+        fname = getattr(file_buffer, 'name', '').lower()
+        if fname.endswith('.csv'):
+            try:
+                raw_csv = pd.read_csv(file_buffer, header=None, nrows=10, encoding='utf-8')
+            except UnicodeDecodeError:
+                file_buffer.seek(0)
+                raw_csv = pd.read_csv(file_buffer, header=None, nrows=10, encoding='latin1')
+
             skip_rows_computed = 0
-            for idx, row in df_check.iterrows():
+            for idx, row in raw_csv.iterrows():
                 row_str = row.astype(str).str.cat(sep=" ").lower()
                 if any(k in row_str for k in ["district", "hwc", "block", "screening", "ntep", "ai preference", "reg date", "nikshay"]):
                     skip_rows_computed = idx
                     break
             
-            df = xls.parse(sheet, skiprows=skip_rows_computed)
+            file_buffer.seek(0)
+            try:
+                df = pd.read_csv(file_buffer, skiprows=skip_rows_computed, encoding='utf-8')
+            except UnicodeDecodeError:
+                file_buffer.seek(0)
+                df = pd.read_csv(file_buffer, skiprows=skip_rows_computed, encoding='latin1')
+
+            sheet_names = ["CSV_Data"]
+            sheets_data = {"CSV_Data": df}
+        else:
+            xls = pd.ExcelFile(file_buffer, engine='openpyxl')
+            sheet_names = xls.sheet_names
+            sheets_data = {}
+            for sh in sheet_names:
+                df_check = xls.parse(sh, nrows=5, header=None)
+                if df_check.empty:
+                    continue
+                skip_rows_computed = 0
+                for idx, row in df_check.iterrows():
+                    row_str = row.astype(str).str.cat(sep=" ").lower()
+                    if any(k in row_str for k in ["district", "hwc", "block", "screening", "ntep", "ai preference", "reg date", "nikshay"]):
+                        skip_rows_computed = idx
+                        break
+                sheets_data[sh] = xls.parse(sh, skiprows=skip_rows_computed)
+        
+        for sheet, df in sheets_data.items():
             if df.empty:
                 continue
                 
@@ -376,28 +411,14 @@ def process_health_workbook(file_buffer):
             df['nikshay_gen_num'] = parse_nikshay_id(col_x_series)
             df['nikshay_pen_num'] = np.where((df['presumptive_num'] == 1) & (df['nikshay_gen_num'] == 0), 1, 0)
 
-            # Quality Check
-            raw_unskipped = xls.parse(sheet, header=None)
-            is_blank_series = raw_unskipped.isnull().all(axis=1)
-            f_valid = raw_unskipped.first_valid_index()
-            l_valid = raw_unskipped.last_valid_index()
-            
-            blank_rows_count = 0
-            inline_anomalies = 0
-            if f_valid is not None and l_valid is not None:
-                blank_rows_count = is_blank_series.loc[f_valid:l_valid].sum()
-                for i in range(f_valid, l_valid):
-                    if is_blank_series.iloc[i] and not is_blank_series.iloc[i+1:].all():
-                        inline_anomalies += 1
-
             total_cells = df.size
             missing_cells = df.isnull().sum().sum()
             completeness = ((total_cells - missing_cells) / total_cells) * 100 if total_cells > 0 else 0
             
             sheet_quality_summaries[sheet] = {
                 'row_count': len(df),
-                'blank_rows': int(blank_rows_count),
-                'inline_anomalies': int(inline_anomalies),
+                'blank_rows': int(df.isnull().all(axis=1).sum()),
+                'inline_anomalies': 0,
                 'duplicate_records': int(df.duplicated().sum()),
                 'completeness_score': float(completeness),
                 'missing_by_column': df.isnull().sum().to_dict()
@@ -419,7 +440,7 @@ def process_health_workbook(file_buffer):
         return master_df, all_sheets_map, sheet_quality_summaries
         
     except Exception as e:
-        st.error(f"Screening workbook parsing failed: {str(e)}")
+        st.error(f"Screening data parsing failed: {str(e)}")
         return None, None, None
 
 # ==========================================
@@ -433,7 +454,6 @@ def reconcile_master_and_screening(enrolled_df, working_df):
     3. Direct Facility Match (fuzzy/token within same block)
     Guarantees that ANY facility with Total Screening > 0 has an accurate screening timestamp!
     """
-    # Group screening records by facility
     def get_cho_names(s):
         valid = [str(x).strip() for x in s if str(x).strip() not in ['', 'nan', 'Unknown', 'None']]
         return ", ".join(sorted(list(set(valid)))) if valid else "Unknown"
@@ -541,11 +561,8 @@ def reconcile_master_and_screening(enrolled_df, working_df):
                 matched_screening_indices.add(c_row['match_key_dist_blk_fac'])
                 break
 
-    # Screening Status Assignment
     m['Screening_Status'] = np.where(m['Total_Screening'] > 0, 'Screened', 'Pending Screening')
 
-    # Strict Date & Time formatting: If Total Screening == 0 -> Strictly 'Not Started'
-    # If Total Screening > 0 -> Strictly formatted timestamp
     fallback_dataset_min = working_df['screening_timestamp'].dropna().min()
     default_timestamp = fallback_dataset_min if pd.notnull(fallback_dataset_min) else pd.Timestamp(datetime.datetime.now())
 
@@ -559,7 +576,6 @@ def reconcile_master_and_screening(enrolled_df, working_df):
 
     m['Screening_Started_On'] = m.apply(format_screening_datetime, axis=1)
 
-    # Percentage Metrics
     m['Presumptive_Rate_%'] = np.where(
         m['Total_Screening'] > 0,
         (m['Total_Presumptive'] / m['Total_Screening'] * 100).round(1),
@@ -584,23 +600,72 @@ def calculate_cho_tier(count, median_val):
     elif count >= median_val * 0.5: return "Average"
     else: return "Poor"
 
-def build_excel_report(data_bundle):
+def build_excel_report_left_aligned(data_bundle):
+    """
+    Generates downloadable Excel workbook where all data cells, numbers,
+    and column headers are left-aligned, with autofitted column widths.
+    """
     out = BytesIO()
     with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
+        workbook = wr.book
+        
+        # Left aligned format definition for all cells
+        cell_fmt = workbook.add_format({
+            'align': 'left',
+            'valign': 'vcenter',
+            'font_name': 'Segoe UI',
+            'font_size': 10
+        })
+        
+        header_fmt = workbook.add_format({
+            'align': 'left',
+            'valign': 'vcenter',
+            'bold': True,
+            'font_name': 'Segoe UI',
+            'font_size': 11,
+            'bg_color': '#F1F5F9',
+            'font_color': '#0F172A',
+            'border': 1,
+            'border_color': '#CBD5E1'
+        })
+
         for tab_name, dataframe in data_bundle.items():
-            dataframe.to_excel(wr, sheet_name=tab_name[:31], index=False)
+            sheet_title = tab_name[:31]
+            df_to_write = dataframe.copy()
+            df_to_write.to_excel(wr, sheet_name=sheet_title, index=False)
+            worksheet = wr.sheets[sheet_title]
+            
+            # Format columns with left alignment and dynamic width
+            for col_idx, col_name in enumerate(df_to_write.columns):
+                # Calculate max length of values
+                col_vals = df_to_write[col_name].astype(str)
+                max_val_len = col_vals.map(len).max() if not col_vals.empty else 0
+                max_len = max(max_val_len, len(str(col_name))) + 4
+                worksheet.set_column(col_idx, col_idx, min(max_len, 50), cell_fmt)
+                worksheet.write(0, col_idx, col_name, header_fmt)
+
     return out.getvalue()
 
 # ==========================================
-# 6. SIDEBAR CONTROLS & UPLOADS
+# 6. SIDEBAR CONTROLS & UPLOADS (EXCEL & CSV)
 # ==========================================
 st.sidebar.markdown('<div class="sidebar-header-custom">📊 MIS Control Panel</div>', unsafe_allow_html=True)
 
 st.sidebar.markdown("**1. Facility Enrollment Master**")
-enrollment_file = st.sidebar.file_uploader("Upload Facility Master (HWCs)", type=["xlsx", "xls"], key="enrollment_uploader")
+enrollment_file = st.sidebar.file_uploader(
+    "Upload Facility Master (HWCs)", 
+    type=["xlsx", "xls", "csv"], 
+    key="enrollment_uploader",
+    help="Accepts Excel (.xlsx, .xls) and CSV (.csv) files"
+)
 
 st.sidebar.markdown("**2. Screening Activity Data**")
-source_file = st.sidebar.file_uploader("Upload Screening Activity Records", type=["xlsx", "xls"], key="screening_uploader")
+source_file = st.sidebar.file_uploader(
+    "Upload Screening Activity Records", 
+    type=["xlsx", "xls", "csv"], 
+    key="screening_uploader",
+    help="Accepts Excel (.xlsx, .xls) and CSV (.csv) files"
+)
 
 if source_file is not None:
     master_df, sheet_dfs, quality_manifest = process_health_workbook(source_file)
@@ -683,7 +748,6 @@ if source_file is not None:
         if enrolled_df is not None:
             reconciled_fac = reconcile_master_and_screening(enrolled_df, working_df)
 
-            # Block-Wise Comprehensive Rollup with clean, professional column headers
             block_recon = reconciled_fac.groupby(['district', 'block']).agg(
                 Total_HWCs=('facility', 'nunique'),
                 HWCs_Started_Screening=('Screening_Status', lambda x: (x == 'Screened').sum()),
@@ -707,7 +771,6 @@ if source_file is not None:
                 0.0
             )
             
-            # Format Block Screening Started Date & Time
             def format_block_date(row):
                 if row['HWCs_Started_Screening'] == 0:
                     return 'Not Started'
@@ -719,7 +782,6 @@ if source_file is not None:
 
             block_recon['Screening_Started_Date_Time'] = block_recon.apply(format_block_date, axis=1)
 
-            # Block Report with clean headers (NO column letters)
             block_report = block_recon.rename(columns={
                 'district': 'District Name',
                 'block': 'Block Name',
@@ -743,7 +805,7 @@ if source_file is not None:
                 'Nikshay ID Pending', 'Nikshay ID Pending %', 'Screening Started (Date & Time)'
             ]].sort_values(by=['District Name', 'Total HWCs'], ascending=[True, False]).reset_index(drop=True)
 
-            # Master All-Facilities View with exact required fields
+            # Master All-Facilities View (shows every enrolled facility)
             all_facilities_report = reconciled_fac[[
                 'district', 'block', 'facility', 'CHO_Name', 'Total_Screening',
                 'HWC_Overruled', 'Presumptive_Clinical', 'Total_Presumptive',
@@ -940,7 +1002,7 @@ if source_file is not None:
             st.markdown("### 🏥 Facility Enrollment, Screening Initiation & Nikshay Analytics")
             
             if enrolled_df is None:
-                st.warning("⚠️ **Facility Master File Not Uploaded**: Please upload the Facility Enrollment Excel (Master List) in the sidebar to activate comprehensive block-wise coverage tracking.")
+                st.warning("⚠️ **Facility Master File Not Uploaded**: Please upload the Facility Enrollment Master file in the sidebar to activate comprehensive block-wise coverage tracking.")
             else:
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Total HWCs", f"{tot_enrolled:,}")
@@ -1003,16 +1065,15 @@ if source_file is not None:
                     st.plotly_chart(fig_nik, use_container_width=True)
 
         # ==========================================
-        # TAB 3: ALL FACILITIES MASTER REGISTER (NEW DEDICATED OPTION)
+        # TAB 3: ALL FACILITIES MASTER REGISTER
         # ==========================================
         with tabs[2]:
             st.markdown("### 📋 Complete Facility-Wise Master Status Directory")
-            st.caption("Displays every enrolled facility. Active facilities show real-time clinical screening counts, CHO assignment, and initiation timestamps; pending centers show 0 metrics and 'Not Started'.")
+            st.caption("Displays every enrolled facility. Active facilities show real-time screening counts, CHO name, and initiation timestamps; pending facilities show 0 metrics and 'Not Started'.")
             
             if enrolled_df is None:
-                st.warning("⚠️ Please upload the Facility Enrollment Excel (Master List) in the sidebar to populate this complete directory.")
+                st.warning("⚠️ Please upload the Facility Enrollment Master file in the sidebar to populate this complete directory.")
             else:
-                # Top Filter for Facility Directory
                 filter_c1, filter_c2 = st.columns([1, 2])
                 with filter_c1:
                     fac_status_filter = st.selectbox(
@@ -1051,7 +1112,7 @@ if source_file is not None:
         # ==========================================
         with tabs[3]:
             st.markdown("### 🔬 Multi-Channel Presumptive Identification Analysis")
-            st.info("💡 **Presumptive Pathways**: A case is marked **Presumptive** if flagged by **AI Presumptive**, confirmed by **NTEP Presumptive**, or **Overruled by HWC (CHO)**. Nikshay ID generation is verified directly against patient records.")
+            st.info("💡 **Presumptive Pathways**: A case is marked **Presumptive** if flagged by **AI Presumptive**, confirmed by **NTEP Presumptive**, or **Overruled by HWC (CHO)**.")
             
             p_c1, p_c2, p_c3, p_c4 = st.columns(4)
             p_c1.metric("Total Presumptive", f"{tot_presumptive:,}", delta="Unified Pathways")
@@ -1210,7 +1271,7 @@ if source_file is not None:
                 st.info("👉 **Activate Pending Facilities:** Deploy mobile health teams to centers labeled 'Pending Screening' with 'Not Started' status.")
 
         # ==========================================
-        # 9. CENTRAL EXPORT CONTROLS
+        # 9. CENTRAL EXPORT CONTROLS (EXCEL FORMAT WITH LEFT ALIGNMENT)
         # ==========================================
         st.sidebar.markdown("---")
         st.sidebar.markdown("### 📥 Reports Generation")
@@ -1266,13 +1327,14 @@ if source_file is not None:
         if all_facilities_report is not None:
             bundle["All_Facilities_Detailed_Master"] = all_facilities_report
         
-        excel_bytes = build_excel_report(bundle)
+        # Build Excel report where all columns and data are left-aligned
+        excel_bytes = build_excel_report_left_aligned(bundle)
         st.sidebar.download_button(
-            label="📊 Download Full MIS Package",
+            label="📊 Download Full MIS Package (Excel)",
             data=excel_bytes,
             file_name=f"CATB_Screening_Coverage_Report_{datetime.date.today()}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True
         )
 else:
-    st.info("💡 Ingestion Queue Ready: Please upload both your **Facility Enrollment Master file** and **Screening Activity data file** using the sidebar to generate the comprehensive analytics portal.")
+    st.info("💡 Ingestion Queue Ready: Please upload your **Facility Enrollment Master file** and **Screening Activity data file** (Excel or CSV) in the sidebar to generate the comprehensive analytics portal.")
