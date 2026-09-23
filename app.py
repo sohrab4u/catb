@@ -1,21 +1,23 @@
 """
 ================================================================================
-CATB Screening & Surveillance Analytics Platform (Master Ground Truth Edition)
+CATB Screening & Surveillance Analytics Platform (NTEP-Only Enhanced Edition)
 ================================================================================
 Enterprise TB Active Case Finding surveillance system featuring:
-- Authoritative HWC Master Hierarchy (Column E) as the absolute source of truth:
-  * ZERO deduplication: Every single entry in the master file is preserved and counted.
-  * Duplicate HWC names (same or different districts/blocks) appear as separate rows.
-  * Strict reconciliation: Total HWCs = Screening Started + Screening Not Started.
-- Complete Screening Data Sheet analytics:
-  * Frontline CHO name mapped from Column G of the Screening Data Sheet.
-  * Column L: AI Preference Presumptive.
-  * Column Q: NTEP Presumptive.
-  * AI + NTEP Both Presumptive (Analytical overlap metric).
-  * Column BA: CHO Override Presumptive.
-  * Total Unique Presumptive (Deduplicated union: AI OR NTEP OR CHO Override).
-  * Column T Progression: Presumptive Open, Presumptive Closed, Diagnosed, Tested.
-- High-visibility compact sidebar and 100% Streamlit Cloud compatibility.
+- AI & NTEP Presumptive Breakdown:
+  * Column L: AI Preference Presumptive
+  * Column Q: NTEP Presumptive
+  * NTEP-Only Presumptive: NTEP Result = 'Presumptive' & AI Preference != 'Presumptive'
+  * AI + NTEP Both Presumptive: Overlap metric
+  * Column BA: CHO Clinical Override Presumptive
+  * Total Unique Presumptive: Strict deduplicated union
+- TB Status Progression (Column T):
+  * PRESUMPTIVE_OPEN -> Presumptive Open / Nikshay Created
+  * PRESUMPTIVE_CLOSED -> Presumptive Closed / Testing Completed
+  * DIAGNOSED_ON_TREATMENT -> Total Diagnosed
+  * Total Tested = PRESUMPTIVE_CLOSED + DIAGNOSED_ON_TREATMENT
+- Complete HWC Master List Integration (District + Block + HWC composite key)
+- Frontline CHO Name mapped from Column G of the Screening Data Sheet
+- High-visibility compact sidebar and 100% Streamlit Cloud compatibility
 """
 
 import datetime
@@ -324,7 +326,7 @@ def detect_field(columns_list, candidates):
 
 
 def make_composite_key(dist, blk, fac):
-    """Normalized composite key (District + Block + HWC Name) for robust linking."""
+    """Normalized composite facility key ensuring geographic uniqueness."""
     d = str(dist).strip().title() if pd.notna(dist) else "Unknown"
     b = str(blk).strip().title() if pd.notna(blk) else "Unknown"
     f = str(fac).strip().title() if pd.notna(fac) else "Unknown"
@@ -332,16 +334,21 @@ def make_composite_key(dist, blk, fac):
 
 
 # ------------------------------------------------------------------------------
-# 3. HIGH-PERFORMANCE DATA STANDARDIZATION & COMPLETE HWC PRESERVATION ENGINE
+# 3. DATA STANDARDIZATION & OVERLAP DERIVATION ENGINE
 # ------------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=None, file_hier_name=None):
     """
     Ingests Screening Data Sheet and authoritative HWC Master Hierarchy.
-    STRICT REQUIREMENT: Every single HWC entry in the master file is retained.
-    NO deduplication is applied to the master file. Duplicate HWC names are preserved as separate rows.
+    Calculates:
+    - AI Presumptive (Column L == 'presumptive')
+    - NTEP Presumptive (Column Q == 'presumptive')
+    - NTEP-Only Presumptive (Column Q == 'presumptive' AND Column L != 'presumptive')
+    - AI + NTEP Both Presumptive (Column L == 'presumptive' AND Column Q == 'presumptive')
+    - CHO Override (Column BA == 1 AND AI/NTEP non-presumptive)
+    - Total Unique Presumptive (Deduplicated union: AI OR NTEP OR CHO Override)
+    - Column T Progression (Open, Closed, Diagnosed, Tested)
     """
-    # 1. Primary Screening Data Sheet
     if file_all_name.lower().endswith(".csv"):
         df_all = pd.read_csv(io.BytesIO(file_all_bytes), low_memory=False)
     else:
@@ -412,7 +419,7 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["str_id"] = df[c_id].astype(str).str.strip() if c_id else df.index.astype(str)
     df["composite_key"] = df.apply(lambda r: make_composite_key(r["District_Clean"], r["Block_Clean"], r["Facility_Clean"]), axis=1)
 
-    # Presumptive Breakdown & Overrule Check
+    # 1. AI Preference & NTEP Result Normalization
     ai_series = df[c_ai].fillna("").astype(str).str.strip().str.lower() if c_ai and c_ai in df.columns else pd.Series([""] * len(df))
     ntep_series = df[c_ntep].fillna("").astype(str).str.strip().str.lower() if c_ntep and c_ntep in df.columns else pd.Series([""] * len(df))
 
@@ -422,24 +429,31 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     else:
         is_ovr_active = pd.Series([False] * len(df))
 
+    # Binary flags for AI, NTEP, Both, and NTEP-Only
     df["is_ai_pres"] = (ai_series == "presumptive").astype(int)
     df["is_ntep_pres"] = (ntep_series == "presumptive").astype(int)
     df["is_both_pres"] = ((df["is_ai_pres"] == 1) & (df["is_ntep_pres"] == 1)).astype(int)
     df["is_ai_only"] = ((df["is_ai_pres"] == 1) & (df["is_ntep_pres"] == 0)).astype(int)
+    
+    # NEW METRIC: NTEP Result = 'Presumptive' AND AI Preference != 'Presumptive'
     df["is_ntep_only"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 1)).astype(int)
+
+    # CHO Override Presumptive (AI Non-Presumptive AND NTEP Non-Presumptive AND Overrule == 1)
     df["is_cho_override"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 0) & is_ovr_active).astype(int)
+
+    # Total Unique Presumptive: Deduplicated union of AI, NTEP, and CHO Override
     df["is_total_presumptive"] = ((df["is_ai_pres"] == 1) | (df["is_ntep_pres"] == 1) | (df["is_cho_override"] == 1)).astype(int)
 
-    # TB Status Progression (Column T)
+    # 2. TB Status Progression (Column T)
     status_series = df[c_status].fillna("").astype(str).str.strip().str.upper() if c_status and c_status in df.columns else pd.Series([""] * len(df))
+
     df["is_presumptive_open"] = (status_series == "PRESUMPTIVE_OPEN").astype(int)
     df["is_presumptive_closed"] = (status_series == "PRESUMPTIVE_CLOSED").astype(int)
     df["is_diagnosed"] = (status_series == "DIAGNOSED_ON_TREATMENT").astype(int)
     df["is_tested"] = (status_series.isin(["PRESUMPTIVE_CLOSED", "DIAGNOSED_ON_TREATMENT"])).astype(int)
 
-    # 2. Complete HWC Master Hierarchy Ingestion (ZERO DEDUPLICATION)
+    # 3. Master Hierarchy Integration
     df_master_hwc = None
-    master_raw_count = 0
     if file_hier_bytes:
         try:
             if file_hier_name.lower().endswith(".csv"):
@@ -450,32 +464,24 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
             h_cols = list(df_h.columns)
             h_dist = detect_field(h_cols, ["district", "district name"])
             h_block = detect_field(h_cols, ["block", "block name", "tehsil"])
-            h_fid = detect_field(h_cols, ["facility id", "facility_id", "hwc id", "hwc_id", "nin", "nin code"])
 
-            # Column E (Index 4) or detected HWC
             if len(h_cols) > 4 and "hwc" in clean_header(str(h_cols[4])):
                 h_fac = h_cols[4]
             else:
                 h_fac = detect_field(h_cols, ["hwc", "facility", "facility name", "health center"])
 
             if h_fac:
-                # Retain EVERY valid row. Do NOT drop duplicates.
                 df_h = df_h[df_h[h_fac].notna()].copy()
                 df_h["Facility_Clean"] = df_h[h_fac].astype(str).str.strip().str.title()
                 df_h["District_Clean"] = df_h[h_dist].fillna("Unknown").astype(str).str.strip().str.title() if h_dist else "Unknown"
                 df_h["Block_Clean"] = df_h[h_block].fillna("Unknown").astype(str).str.strip().str.title() if h_block else "Unknown"
-                df_h["Facility_ID"] = df_h[h_fid].astype(str).str.strip() if h_fid else ""
 
-                # Assign a unique Master Row ID to preserve exact 1-to-1 row correspondence
-                df_h["master_row_id"] = np.arange(1, len(df_h) + 1)
                 df_h["composite_key"] = df_h.apply(lambda r: make_composite_key(r["District_Clean"], r["Block_Clean"], r["Facility_Clean"]), axis=1)
-
-                master_raw_count = len(df_h)
-                df_master_hwc = df_h.copy()
+                df_master_hwc = df_h[["District_Clean", "Block_Clean", "Facility_Clean", "composite_key"]].drop_duplicates(subset=["composite_key"]).copy()
         except Exception:
             pass
 
-    return df, df_master_hwc, master_raw_count
+    return df, df_master_hwc
 
 
 def render_enterprise_kpi(col, label, value, subtext, icon, accent_color="#0284C7", bg_bubble="#E0F2FE"):
@@ -539,7 +545,7 @@ def main():
             """
             <div class="app-header">
                 <div>
-                    <h1 class="app-header-title"><span>🩺</span> CATB Insights (Screening & Clinical Surveillance Platform)</h1>
+                    <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
                     <div class="app-header-subtitle">Active Case Finding (ACF) Intelligence, AI Triage & Nikshay Continuum of Care</div>
                 </div>
                 <div class="system-status-pill">
@@ -553,8 +559,8 @@ def main():
         return
 
     # Ingest Datasets
-    with st.spinner("⚡ Loading full HWC master list & processing screening records..."):
-        df_screening, df_master_hwc, master_raw_count = load_and_standardize_data(
+    with st.spinner("⚡ Processing Screening Data Sheet & calculating AI/NTEP concordance..."):
+        df_screening, df_master_hwc = load_and_standardize_data(
             up_all.getvalue(),
             up_all.name,
             up_hier.getvalue() if up_hier else None,
@@ -581,7 +587,7 @@ def main():
         else:
             start_date, end_date = None, None
 
-        # Build Geography Reference from Master or Screening
+        # Build Geography Options from Master or Screening
         geo_ref = df_master_hwc if df_master_hwc is not None else df_screening
 
         # District Filter
@@ -636,7 +642,7 @@ def main():
             st.rerun()
 
     # --------------------------------------------------------------------------
-    # APPLY DATE & GEOGRAPHY FILTERS TO SCREENING LINE LIST
+    # APPLY DATE & GEOGRAPHY FILTERS TO WORKING DATASET
     # --------------------------------------------------------------------------
     f_screen = df_screening.copy()
     if start_date and end_date:
@@ -651,9 +657,8 @@ def main():
         f_screen = f_screen[f_screen["CHO_Clean"].isin(sel_chos)]
 
     # --------------------------------------------------------------------------
-    # 1-TO-1 MASTER LIST PRESERVATION & NON-COLLAPSING JOIN
+    # COMPOSITE HWC BASE DIRECTORY & AGGREGATION
     # --------------------------------------------------------------------------
-    # 1. Base HWC Master Dataset: Retain EVERY single entry without dropping duplicates
     if df_master_hwc is not None:
         base_hwc = df_master_hwc.copy()
         if sel_districts:
@@ -663,13 +668,11 @@ def main():
         if sel_hwcs:
             base_hwc = base_hwc[base_hwc["Facility_Clean"].isin(sel_hwcs)]
     else:
-        # If no hierarchy uploaded, count unique composite combinations (District + Block + HWC)
         base_hwc = (
             df_screening[["District_Clean", "Block_Clean", "Facility_Clean", "composite_key"]]
             .drop_duplicates(subset=["composite_key"])
             .copy()
         )
-        base_hwc["master_row_id"] = np.arange(1, len(base_hwc) + 1)
         if sel_districts:
             base_hwc = base_hwc[base_hwc["District_Clean"].isin(sel_districts)]
         if sel_blocks:
@@ -677,7 +680,6 @@ def main():
         if sel_hwcs:
             base_hwc = base_hwc[base_hwc["Facility_Clean"].isin(sel_hwcs)]
 
-    # 2. Extract Active CHO Name from Column G of Screening Data by Composite Key
     cho_mapping = (
         f_screen[f_screen["CHO_Clean"] != "Not Available"]
         .groupby("composite_key")["CHO_Clean"]
@@ -686,13 +688,13 @@ def main():
         .rename(columns={"CHO_Clean": "Active_CHO_Name"})
     )
 
-    # 3. Aggregate Screening Activity by Composite Key
     screen_summary = (
         f_screen.groupby("composite_key")
         .agg(
             Total_Screening=("composite_key", "count"),
             AI_Presumptive=("is_ai_pres", "sum"),
             NTEP_Presumptive=("is_ntep_pres", "sum"),
+            NTEP_Only_Presumptive=("is_ntep_only", "sum"),
             Both_AI_NTEP=("is_both_pres", "sum"),
             CHO_Override=("is_cho_override", "sum"),
             Total_Presumptive=("is_total_presumptive", "sum"),
@@ -704,13 +706,13 @@ def main():
         .reset_index()
     )
 
-    # 4. Left-Merge onto base_hwc by composite_key preserving every master_row_id exactly
     hwc_matrix = pd.merge(base_hwc, screen_summary, on="composite_key", how="left")
     hwc_matrix = pd.merge(hwc_matrix, cho_mapping, on="composite_key", how="left")
 
     hwc_matrix["Total_Screening"] = hwc_matrix["Total_Screening"].fillna(0).astype(int)
     hwc_matrix["AI_Presumptive"] = hwc_matrix["AI_Presumptive"].fillna(0).astype(int)
     hwc_matrix["NTEP_Presumptive"] = hwc_matrix["NTEP_Presumptive"].fillna(0).astype(int)
+    hwc_matrix["NTEP_Only_Presumptive"] = hwc_matrix["NTEP_Only_Presumptive"].fillna(0).astype(int)
     hwc_matrix["Both_AI_NTEP"] = hwc_matrix["Both_AI_NTEP"].fillna(0).astype(int)
     hwc_matrix["CHO_Override"] = hwc_matrix["CHO_Override"].fillna(0).astype(int)
     hwc_matrix["Total_Presumptive"] = hwc_matrix["Total_Presumptive"].fillna(0).astype(int)
@@ -723,20 +725,17 @@ def main():
     hwc_matrix["Block_Name"] = hwc_matrix["Block_Clean"]
     hwc_matrix["HWC_Name"] = hwc_matrix["Facility_Clean"]
 
-    # CHO Name: If screening started, display active CHO; otherwise "Not Available"
     hwc_matrix["CHO_Name"] = hwc_matrix["Active_CHO_Name"].fillna("Not Available")
     hwc_matrix.loc[hwc_matrix["Total_Screening"] == 0, "CHO_Name"] = "Not Available"
 
-    # Facility Activity Status
     hwc_matrix["Screening_Status"] = np.where(hwc_matrix["Total_Screening"] > 0, "Screening Started", "Screening Not Started")
 
     if sel_chos:
         hwc_matrix = hwc_matrix[hwc_matrix["CHO_Name"].isin(sel_chos)]
 
     # --------------------------------------------------------------------------
-    # ACCURATE TOTAL HWCS & KPI RECONCILIATION
+    # DASHBOARD KPI CARD AGGREGATES
     # --------------------------------------------------------------------------
-    # Total HWCs exactly matches the row count of base_hwc (master entries)
     total_hwcs = len(hwc_matrix)
     screening_started_hwcs = int((hwc_matrix["Screening_Status"] == "Screening Started").sum())
     screening_not_started_hwcs = int((hwc_matrix["Screening_Status"] == "Screening Not Started").sum())
@@ -744,6 +743,7 @@ def main():
     total_screenings = int(hwc_matrix["Total_Screening"].sum())
     total_ai_pres = int(hwc_matrix["AI_Presumptive"].sum())
     total_ntep_pres = int(hwc_matrix["NTEP_Presumptive"].sum())
+    total_ntep_only_pres = int(hwc_matrix["NTEP_Only_Presumptive"].sum())
     total_both_pres = int(hwc_matrix["Both_AI_NTEP"].sum())
     total_cho_override = int(hwc_matrix["CHO_Override"].sum())
     total_presumptive = int(hwc_matrix["Total_Presumptive"].sum())
@@ -753,23 +753,27 @@ def main():
     total_tested = int(hwc_matrix["Total_Tested"].sum())
     total_diagnosed = int(hwc_matrix["Total_Diagnosed"].sum())
 
-    # Rates
+    # Agreement metrics
+    ai_only_pres = int((f_screen["is_ai_only"]).sum())
+    both_non_pres = int(((f_screen["is_ai_pres"] == 0) & (f_screen["is_ntep_pres"] == 0)).sum())
+    concordance_rate = ((total_both_pres + both_non_pres) / max(total_screenings, 1)) * 100
+
     pres_yield = (total_presumptive / max(total_screenings, 1)) * 100
     testing_rate = (total_tested / max(total_presumptive, 1)) * 100
     diagnosis_yield = (total_diagnosed / max(total_tested, 1)) * 100 if total_tested > 0 else 0.0
 
     # --------------------------------------------------------------------------
-    # TOP HEADER BANNER & VALIDATION NOTICE
+    # TOP HEADER BANNER
     # --------------------------------------------------------------------------
     current_time_str = datetime.datetime.now().strftime("%d %b %Y | %H:%M:%S")
     st.markdown(
         f"""
         <div class="app-header">
             <div>
-                <h1 class="app-header-title"><span>🩺</span> CATB Insights (Screening & Clinical Surveillance Platform)</h1>
+                <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
                 <div class="app-header-subtitle">
                     Jurisdiction: <b>{f"{len(sel_districts)} Districts Selected" if sel_districts else "All Monitored Districts"}</b> &nbsp;|&nbsp; 
-                    Master HWCs: <b>{total_hwcs:,} Entries (Column E)</b> &nbsp;|&nbsp; 
+                    Master HWCs: <b>{total_hwcs:,} Entries (Col E)</b> &nbsp;|&nbsp; 
                     Period: <b>{start_date} to {end_date}</b> &nbsp;|&nbsp; 
                     Last Sync: <b>{current_time_str}</b>
                 </div>
@@ -782,20 +786,8 @@ def main():
         unsafe_allow_html=True,
     )
 
-    # Master Validation Confirmation Box
-    if df_master_hwc is not None:
-        st.markdown(
-            f"""
-            <div style="background-color: #F0FDF4; border: 1.5px solid #86EFAC; padding: 6px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 0.8rem; color: #166534; font-weight: 600;">
-                ✓ <b>HWC Master Reconciliation Verified:</b> Total HWC count ({total_hwcs:,}) exactly matches master file Column E entries. All duplicate HWC names across different blocks/districts are preserved and accounted for.
-                <span style="float: right;">Screening Started ({screening_started_hwcs:,}) + Not Started ({screening_not_started_hwcs:,}) = {total_hwcs:,}</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     # --------------------------------------------------------------------------
-    # DASHBOARD KPI CARDS SECTION (ACCURATELY RECONCILED)
+    # DASHBOARD KPI CARDS SECTION (3 THEMATIC CATEGORIES)
     # --------------------------------------------------------------------------
     st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🏛️</span> 1. Screening Overview & Facility Operational Status</div></div>', unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
@@ -804,20 +796,22 @@ def main():
     render_enterprise_kpi(c3, "Screening Not Started", f"{screening_not_started_hwcs:,}", f"{(screening_not_started_hwcs/max(total_hwcs,1)*100):.1f}% inactive facilities", "⏳", "#DC2626", "#FEE2E2")
     render_enterprise_kpi(c4, "Total Screening", f"{total_screenings:,}", "Evaluated individuals", "📋", "#0D9488", "#CCFBF1")
 
+    # Section 2: Presumptive Classification Breakdown with 6 KPI Cards (Including NTEP-Only)
     st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🔬</span> 2. Presumptive Classification Breakdown & Overlap Analysis</div></div>', unsafe_allow_html=True)
-    c5, c6, c7, c8, c9 = st.columns(5)
+    c5, c6, c7, c8, c9, c10 = st.columns(6)
     render_enterprise_kpi(c5, "AI Preference Presumptive", f"{total_ai_pres:,}", "AI algorithm (Col L)", "🤖", "#8B5CF6", "#F3E8FF")
     render_enterprise_kpi(c6, "NTEP Presumptive", f"{total_ntep_pres:,}", "Standard protocol (Col Q)", "📋", "#D97706", "#FEF3C7")
-    render_enterprise_kpi(c7, "AI + NTEP Both Presumptive", f"{total_both_pres:,}", "Dual identified overlap", "🤝", "#0284C7", "#E0F2FE")
-    render_enterprise_kpi(c8, "CHO Override Presumptive", f"{total_cho_override:,}", "Frontline override (Col BA)", "👩‍⚕️", "#EC4899", "#FCE7F3")
-    render_enterprise_kpi(c9, "Total Unique Presumptive", f"{total_presumptive:,}", f"Deduplicated Yield: {pres_yield:.1f}%", "⚠️", "#EF4444", "#FEE2E2")
+    render_enterprise_kpi(c7, "NTEP-Only Presumptive", f"{total_ntep_only_pres:,}", "NTEP (+), AI (-)", "🔬", "#EA580C", "#FFEDD5")
+    render_enterprise_kpi(c8, "AI + NTEP Both Presumptive", f"{total_both_pres:,}", "Dual identified overlap", "🤝", "#0284C7", "#E0F2FE")
+    render_enterprise_kpi(c9, "CHO Override Presumptive", f"{total_cho_override:,}", "Frontline override (Col BA)", "👩‍⚕️", "#EC4899", "#FCE7F3")
+    render_enterprise_kpi(c10, "Total Unique Presumptive", f"{total_presumptive:,}", f"Deduplicated Yield: {pres_yield:.1f}%", "⚠️", "#EF4444", "#FEE2E2")
 
     st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>📈</span> 3. TB Case Progression & Clinical Outcomes</div></div>', unsafe_allow_html=True)
-    c10, c11, c12, c13 = st.columns(4)
-    render_enterprise_kpi(c10, "Presumptive Open", f"{total_presumptive_open:,}", "PRESUMPTIVE_OPEN (Nikshay Created)", "🆔", "#2563EB", "#DBEAFE")
-    render_enterprise_kpi(c11, "Presumptive Closed", f"{total_presumptive_closed:,}", "PRESUMPTIVE_CLOSED (Negative/Completed)", "🔒", "#475569", "#F1F5F9")
-    render_enterprise_kpi(c12, "Total Tested", f"{total_tested:,}", f"Closed ({total_presumptive_closed}) + Diagnosed ({total_diagnosed})", "🧪", "#7C3AED", "#EDE9FE")
-    render_enterprise_kpi(c13, "Total Diagnosed", f"{total_diagnosed:,}", f"DIAGNOSED_ON_TREATMENT ({diagnosis_yield:.1f}%)", "🩺", "#059669", "#D1FAE5")
+    c11, c12, c13, c14 = st.columns(4)
+    render_enterprise_kpi(c11, "Presumptive Open", f"{total_presumptive_open:,}", "PRESUMPTIVE_OPEN (Nikshay Created)", "🆔", "#2563EB", "#DBEAFE")
+    render_enterprise_kpi(c12, "Presumptive Closed", f"{total_presumptive_closed:,}", "PRESUMPTIVE_CLOSED (Negative/Completed)", "🔒", "#475569", "#F1F5F9")
+    render_enterprise_kpi(c13, "Total Tested", f"{total_tested:,}", f"Closed ({total_presumptive_closed}) + Diagnosed ({total_diagnosed})", "🧪", "#7C3AED", "#EDE9FE")
+    render_enterprise_kpi(c14, "Total Diagnosed", f"{total_diagnosed:,}", f"DIAGNOSED_ON_TREATMENT ({diagnosis_yield:.1f}%)", "🩺", "#059669", "#D1FAE5")
 
     # --------------------------------------------------------------------------
     # MAIN NAVIGATION TABS
@@ -835,7 +829,7 @@ def main():
     )
 
     # ==========================================================================
-    # TAB 1: HWC-WISE PERFORMANCE REPORT (COMPLETE MASTER LIST, NO ROWS DROPPED)
+    # TAB 1: HWC-WISE PERFORMANCE REPORT (WITH NTEP-ONLY PRESUMPTIVE COLUMN)
     # ==========================================================================
     with tab_hwc:
         st.markdown(
@@ -860,6 +854,7 @@ def main():
             "Total_Screening",
             "AI_Presumptive",
             "NTEP_Presumptive",
+            "NTEP_Only_Presumptive",
             "Both_AI_NTEP",
             "CHO_Override",
             "Total_Presumptive",
@@ -878,6 +873,7 @@ def main():
                 "Total_Screening": "Total Screening",
                 "AI_Presumptive": "AI Presumptive",
                 "NTEP_Presumptive": "NTEP Presumptive",
+                "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
                 "Both_AI_NTEP": "AI + NTEP Both Presumptive",
                 "CHO_Override": "CHO Override",
                 "Total_Presumptive": "Total Unique Presumptive",
@@ -905,6 +901,7 @@ def main():
                     "Total Screening": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
+                    "NTEP-Only Presumptive": "{:,}",
                     "AI + NTEP Both Presumptive": "{:,}",
                     "CHO Override": "{:,}",
                     "Total Unique Presumptive": "{:,}",
@@ -935,12 +932,13 @@ def main():
         dist_summary = (
             hwc_matrix.groupby("District_Name")
             .agg(
-                Total_HWCs=("HWC_Name", "count"),
+                Total_HWCs=("composite_key", "count"),
                 Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
                 Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
                 Total_Screening=("Total_Screening", "sum"),
                 AI_Presumptive=("AI_Presumptive", "sum"),
                 NTEP_Presumptive=("NTEP_Presumptive", "sum"),
+                NTEP_Only_Presumptive=("NTEP_Only_Presumptive", "sum"),
                 Both_AI_NTEP=("Both_AI_NTEP", "sum"),
                 CHO_Override=("CHO_Override", "sum"),
                 Total_Presumptive=("Total_Presumptive", "sum"),
@@ -959,6 +957,7 @@ def main():
                     "Total_Screening": "Total Screening",
                     "AI_Presumptive": "AI Presumptive",
                     "NTEP_Presumptive": "NTEP Presumptive",
+                    "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
                     "Both_AI_NTEP": "AI + NTEP Both Presumptive",
                     "CHO_Override": "CHO Override",
                     "Total_Presumptive": "Total Unique Presumptive",
@@ -973,10 +972,10 @@ def main():
         fig_dist = px.bar(
             dist_summary.sort_values(by="Total Screening", ascending=False),
             x="District Name",
-            y=["Total Screening", "Total Unique Presumptive", "AI + NTEP Both Presumptive", "Total Tested", "Total Diagnosed"],
+            y=["Total Screening", "Total Unique Presumptive", "NTEP-Only Presumptive", "Total Tested", "Total Diagnosed"],
             barmode="group",
-            color_discrete_sequence=["#0284C7", "#EF4444", "#8B5CF6", "#7C3AED", "#059669"],
-            title="District Performance: Screening, Presumptive Breakdown, Overlap & Diagnosis",
+            color_discrete_sequence=["#0284C7", "#EF4444", "#EA580C", "#7C3AED", "#059669"],
+            title="District Performance: Screening, Presumptive Breakdown, NTEP-Only & Diagnosis",
         )
         fig_dist.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), height=350, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig_dist, use_container_width=True)
@@ -990,6 +989,7 @@ def main():
                     "Total Screening": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
+                    "NTEP-Only Presumptive": "{:,}",
                     "AI + NTEP Both Presumptive": "{:,}",
                     "CHO Override": "{:,}",
                     "Total Unique Presumptive": "{:,}",
@@ -1019,12 +1019,13 @@ def main():
         block_summary = (
             hwc_matrix.groupby(["District_Name", "Block_Name"])
             .agg(
-                Total_HWCs=("HWC_Name", "count"),
+                Total_HWCs=("composite_key", "count"),
                 Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
                 Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
                 Total_Screening=("Total_Screening", "sum"),
                 AI_Presumptive=("AI_Presumptive", "sum"),
                 NTEP_Presumptive=("NTEP_Presumptive", "sum"),
+                NTEP_Only_Presumptive=("NTEP_Only_Presumptive", "sum"),
                 Both_AI_NTEP=("Both_AI_NTEP", "sum"),
                 CHO_Override=("CHO_Override", "sum"),
                 Total_Presumptive=("Total_Presumptive", "sum"),
@@ -1044,6 +1045,7 @@ def main():
                     "Total_Screening": "Total Screening",
                     "AI_Presumptive": "AI Presumptive",
                     "NTEP_Presumptive": "NTEP Presumptive",
+                    "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
                     "Both_AI_NTEP": "AI + NTEP Both Presumptive",
                     "CHO_Override": "CHO Override",
                     "Total_Presumptive": "Total Unique Presumptive",
@@ -1064,6 +1066,7 @@ def main():
                     "Total Screening": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
+                    "NTEP-Only Presumptive": "{:,}",
                     "AI + NTEP Both Presumptive": "{:,}",
                     "CHO Override": "{:,}",
                     "Total Unique Presumptive": "{:,}",
@@ -1126,15 +1129,10 @@ def main():
             unsafe_allow_html=True,
         )
 
-        ai_only_pres = int((f_screen["is_ai_only"]).sum())
-        ntep_only_pres = int((f_screen["is_ntep_only"]).sum())
-        both_non_pres = int(((f_screen["is_ai_pres"] == 0) & (f_screen["is_ntep_pres"] == 0)).sum())
-        concordance_rate = ((total_both_pres + both_non_pres) / max(total_screenings, 1)) * 100
-
         ag1, ag2, ag3, ag4, ag5 = st.columns(5)
         render_enterprise_kpi(ag1, "Both Presumptive", f"{total_both_pres:,}", "AI & NTEP Concordant", "🤝", "#16A34A", "#DCFCE7")
         render_enterprise_kpi(ag2, "AI Only Presumptive", f"{ai_only_pres:,}", "NTEP Non-Presumptive", "🤖", "#8B5CF6", "#F3E8FF")
-        render_enterprise_kpi(ag3, "NTEP Only Presumptive", f"{ntep_only_pres:,}", "AI Non-Presumptive", "📋", "#D97706", "#FEF3C7")
+        render_enterprise_kpi(ag3, "NTEP-Only Presumptive", f"{total_ntep_only_pres:,}", "AI Non-Presumptive", "🔬", "#EA580C", "#FFEDD5")
         render_enterprise_kpi(ag4, "Both Non-Presumptive", f"{both_non_pres:,}", "Concordant Negatives", "🛡️", "#475569", "#F1F5F9")
         render_enterprise_kpi(ag5, "Overall Concordance", f"{concordance_rate:.1f}%", "AI-NTEP Agreement", "🎯", "#0284C7", "#E0F2FE")
 
@@ -1146,7 +1144,7 @@ def main():
             contingency_df = pd.DataFrame(
                 {
                     "Classification Modality": ["AI Presumptive", "AI Non-Presumptive"],
-                    "NTEP Presumptive": [total_both_pres, ntep_only_pres],
+                    "NTEP Presumptive": [total_both_pres, total_ntep_only_pres],
                     "NTEP Non-Presumptive": [ai_only_pres, both_non_pres],
                 }
             )
@@ -1155,7 +1153,7 @@ def main():
             st.caption(
                 f"• **Dual Positive Yield:** {total_both_pres:,} cases identified by both modalities.\n"
                 f"• **AI Incremental Capture:** {ai_only_pres:,} additional presumptive cases caught by AI where standard protocol was non-presumptive.\n"
-                f"• **NTEP Incremental Capture:** {ntep_only_pres:,} presumptive cases caught by standard protocol where AI was non-presumptive.\n"
+                f"• **NTEP-Only Incremental Capture:** {total_ntep_only_pres:,} presumptive cases caught by standard protocol where AI was non-presumptive.\n"
                 f"• **Frontline CHO Clinical Override:** {total_cho_override:,} cases where CHO intervened on dual non-presumptive records."
             )
 
@@ -1166,10 +1164,10 @@ def main():
                     "Component": [
                         "1. AI + NTEP Both Presumptive",
                         "2. AI Only Presumptive",
-                        "3. NTEP Only Presumptive",
+                        "3. NTEP-Only Presumptive",
                         "4. CHO Clinical Override",
                     ],
-                    "Beneficiaries": [total_both_pres, ai_only_pres, ntep_only_pres, total_cho_override],
+                    "Beneficiaries": [total_both_pres, ai_only_pres, total_ntep_only_pres, total_cho_override],
                 }
             )
             fig_comp = px.pie(
@@ -1177,7 +1175,7 @@ def main():
                 names="Component",
                 values="Beneficiaries",
                 hole=0.55,
-                color_discrete_sequence=["#16A34A", "#8B5CF6", "#D97706", "#EC4899"],
+                color_discrete_sequence=["#16A34A", "#8B5CF6", "#EA580C", "#EC4899"],
             )
             fig_comp.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", yanchor="bottom", y=-0.25))
             st.plotly_chart(fig_comp, use_container_width=True)
@@ -1191,7 +1189,7 @@ def main():
 
         st.dataframe(
             top_discordant[
-                ["District_Name", "Block_Name", "HWC_Name", "CHO_Name", "Total_Screening", "AI_Presumptive", "NTEP_Presumptive", "Both_AI_NTEP", "Mismatch_Cases", "CHO_Override"]
+                ["District_Name", "Block_Name", "HWC_Name", "CHO_Name", "Total_Screening", "AI_Presumptive", "NTEP_Presumptive", "NTEP_Only_Presumptive", "Both_AI_NTEP", "Mismatch_Cases", "CHO_Override"]
             ].rename(
                 columns={
                     "District_Name": "District",
@@ -1201,6 +1199,7 @@ def main():
                     "Total_Screening": "Screening",
                     "AI_Presumptive": "AI Presumptive",
                     "NTEP_Presumptive": "NTEP Presumptive",
+                    "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
                     "Both_AI_NTEP": "Both Presumptive",
                     "Mismatch_Cases": "AI-NTEP Mismatches",
                     "CHO_Override": "CHO Override",
@@ -1255,10 +1254,11 @@ def main():
                     "Identification Modality": [
                         "AI Presumptive (Col L)",
                         "NTEP Presumptive (Col Q)",
+                        "NTEP-Only Presumptive",
                         "AI + NTEP Both (Overlap)",
                         "CHO Clinical Override (Col BA)",
                     ],
-                    "Cases": [total_ai_pres, total_ntep_pres, total_both_pres, total_cho_override],
+                    "Cases": [total_ai_pres, total_ntep_pres, total_ntep_only_pres, total_both_pres, total_cho_override],
                 }
             )
             fig_bar = px.bar(
@@ -1267,7 +1267,7 @@ def main():
                 y="Cases",
                 color="Identification Modality",
                 text_auto=True,
-                color_discrete_sequence=["#8B5CF6", "#D97706", "#0284C7", "#EC4899"],
+                color_discrete_sequence=["#8B5CF6", "#D97706", "#EA580C", "#0284C7", "#EC4899"],
             )
             fig_bar.update_layout(showlegend=False, height=330, margin=dict(l=10, r=10, t=10, b=10))
             st.plotly_chart(fig_bar, use_container_width=True)
