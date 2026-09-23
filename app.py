@@ -1,14 +1,22 @@
 """
 ================================================================================
-CATB Screening & Surveillance Analytics Platform (Compact UI Edition)
+CATB Screening & Surveillance Analytics Platform (Clean & Robust Edition)
 ================================================================================
 Enterprise TB Active Case Finding surveillance system featuring:
-- Streamlined, high-visibility sidebar layout with well-defined container boxes
-- Prominent filter section headers with zero wasted vertical space
-- Compact side-by-side date selectors and multi-select filters
+- Zero external matplotlib dependency (100% Streamlit Cloud compatible)
+- Ingestion of Screening Data Sheet + HWC Master Hierarchy (2 files only)
+- Presumptive Classification Breakdown:
+  * Column L: AI Preference Presumptive
+  * Column Q: NTEP Presumptive
+  * Column BA: CHO Override Presumptive (AI & NTEP Non-Presumptive + Overrule == 1)
+  * Total Unique Presumptive (Deduplicated union avoiding double-counting)
+- TB Status Classification (Column T):
+  * PRESUMPTIVE_OPEN -> Presumptive Open / Nikshay Created
+  * PRESUMPTIVE_CLOSED -> Presumptive Closed / Testing Completed
+  * DIAGNOSED_ON_TREATMENT -> Total Diagnosed
+  * Total Tested = PRESUMPTIVE_CLOSED + DIAGNOSED_ON_TREATMENT
 - Complete HWC Master List integration with zero-screening facility tracking
-- Presumptive calculation from Column L (AI), Column Q (NTEP), and Column BA (CHO Override)
-- TB Status metrics from Column T (Open, Closed, Tested, Diagnosed)
+- Frontline CHO Name mapped from Column G of the Screening Data Sheet
 """
 
 import datetime
@@ -22,7 +30,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ------------------------------------------------------------------------------
-# 1. PAGE SETUP & ENHANCED SIDEBAR CSS (HIGH VISIBILITY & COMPACT)
+# 1. PAGE SETUP & COMPACT ENTERPRISE CSS
 # ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="CATB Screening & Surveillance Portal",
@@ -39,50 +47,44 @@ ENTERPRISE_THEME_CSS = """
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Main Container Padding */
     .block-container {
-        padding-top: 1rem;
-        padding-bottom: 2rem;
+        padding-top: 1.2rem;
+        padding-bottom: 2.5rem;
         padding-left: 2rem;
         padding-right: 2rem;
         max-width: 100% !important;
     }
 
-    /* ---------------- SIDEBAR REDESIGN & OPTIMIZATION ---------------- */
     [data-testid="stSidebar"] {
         background-color: #F8FAFC !important;
         border-right: 1.5px solid #E2E8F0 !important;
     }
     [data-testid="stSidebar"] > div:first-child {
-        padding-top: 0.6rem !important;
-        padding-left: 0.8rem !important;
-        padding-right: 0.8rem !important;
+        padding-top: 0.8rem;
+        padding-left: 0.9rem;
+        padding-right: 0.9rem;
     }
-    
-    /* Compact Sidebar Brand */
     .sidebar-brand {
         display: flex;
         align-items: center;
         gap: 8px;
-        padding-bottom: 6px;
+        padding-bottom: 8px;
         border-bottom: 1.5px solid #E2E8F0;
-        margin-bottom: 8px;
+        margin-bottom: 12px;
     }
     .sidebar-brand-title {
-        font-size: 1rem;
+        font-size: 1.05rem;
         font-weight: 800;
         color: #0F172A;
         line-height: 1.1;
     }
     .sidebar-brand-sub {
-        font-size: 0.7rem;
+        font-size: 0.72rem;
         color: #64748B;
-        font-weight: 600;
+        font-weight: 500;
     }
-
-    /* Section Category Headings */
     .sidebar-category-header {
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 800;
         text-transform: uppercase;
         letter-spacing: 0.08em;
@@ -90,35 +92,34 @@ ENTERPRISE_THEME_CSS = """
         background: #E0F2FE;
         padding: 4px 8px;
         border-radius: 6px;
-        margin-top: 8px;
+        margin-top: 10px;
         margin-bottom: 6px;
         display: flex;
         align-items: center;
         gap: 5px;
     }
 
-    /* Prominent Filter Item Headers */
     .filter-item-label {
         font-size: 0.74rem !important;
         font-weight: 700 !important;
         color: #1E293B !important;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        margin-top: 5px !important;
+        margin-top: 6px !important;
         margin-bottom: 2px !important;
         display: flex;
         align-items: center;
         gap: 4px;
     }
 
-    /* Enhanced, Well-Defined Filter Input Boxes */
+    /* Input Boxes */
     [data-testid="stMultiSelect"] > div,
     [data-testid="stDateInput"] > div,
     [data-testid="stSelectbox"] > div {
         background-color: #FFFFFF !important;
         border: 1.5px solid #CBD5E1 !important;
         border-radius: 8px !important;
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
         transition: all 0.2s ease-in-out !important;
         min-height: 38px !important;
     }
@@ -128,7 +129,6 @@ ENTERPRISE_THEME_CSS = """
         border-color: #0284C7 !important;
         box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15) !important;
     }
-    /* Multi-select selection chip tags */
     [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
         background-color: #0F172A !important;
         color: #FFFFFF !important;
@@ -138,18 +138,18 @@ ENTERPRISE_THEME_CSS = """
         padding: 1px 5px !important;
     }
 
-    /* Ultra-Compact Upload Boxes */
+    /* Fixed Height File Uploader Box */
     [data-testid="stFileUploaderInstructions"],
     [data-testid="stFileUploaderDropzoneInstructions"] {
         display: none !important;
     }
     [data-testid="stFileUploader"] {
-        margin-bottom: 4px !important;
+        margin-bottom: 6px !important;
     }
     [data-testid="stFileUploaderDropzone"] {
-        padding: 4px 8px !important;
-        min-height: 44px !important;
-        max-height: 46px !important;
+        padding: 6px 10px !important;
+        min-height: 46px !important;
+        max-height: 50px !important;
         border-radius: 8px !important;
         border: 1.5px dashed #94A3B8 !important;
         background-color: #FFFFFF !important;
@@ -174,30 +174,30 @@ ENTERPRISE_THEME_CSS = """
     /* Main Dashboard Header */
     .app-header {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-        padding: 14px 20px;
+        padding: 16px 22px;
         border-radius: 12px;
         color: white;
-        margin-bottom: 14px;
+        margin-bottom: 16px;
         border: 1px solid #334155;
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 12px;
     }
     .app-header-title {
-        font-size: 1.35rem;
+        font-size: 1.45rem;
         font-weight: 800;
         letter-spacing: -0.02em;
         margin: 0;
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
         color: #FFFFFF;
     }
     .app-header-subtitle {
         color: #94A3B8;
-        font-size: 0.8rem;
+        font-size: 0.82rem;
         margin-top: 2px;
     }
     .system-status-pill {
@@ -207,14 +207,14 @@ ENTERPRISE_THEME_CSS = """
         background: rgba(16, 185, 129, 0.15);
         color: #34D399;
         border: 1px solid rgba(52, 211, 153, 0.3);
-        padding: 4px 10px;
+        padding: 4px 12px;
         border-radius: 9999px;
-        font-size: 0.74rem;
+        font-size: 0.76rem;
         font-weight: 600;
     }
     .pulse-dot {
-        width: 6px;
-        height: 6px;
+        width: 7px;
+        height: 7px;
         background-color: #10B981;
         border-radius: 50%;
     }
@@ -223,7 +223,7 @@ ENTERPRISE_THEME_CSS = """
     .kpi-grid-card {
         background: #FFFFFF;
         border-radius: 12px;
-        padding: 12px 14px;
+        padding: 14px 16px;
         border: 1px solid #E2E8F0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         position: relative;
@@ -236,7 +236,7 @@ ENTERPRISE_THEME_CSS = """
     }
     .kpi-grid-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 14px -3px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.06);
         border-color: #CBD5E1;
     }
     .kpi-accent-bar {
@@ -244,59 +244,59 @@ ENTERPRISE_THEME_CSS = """
         top: 0;
         left: 0;
         right: 0;
-        height: 3px;
+        height: 3.5px;
     }
     .kpi-top-meta {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        margin-bottom: 3px;
+        margin-bottom: 4px;
     }
     .kpi-label {
-        font-size: 0.68rem;
+        font-size: 0.7rem;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.05em;
         color: #64748B;
     }
     .kpi-icon-bubble {
-        width: 26px;
-        height: 26px;
+        width: 28px;
+        height: 28px;
         border-radius: 6px;
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.9rem;
+        font-size: 0.95rem;
     }
     .kpi-metric-value {
-        font-size: 1.55rem;
+        font-size: 1.6rem;
         font-weight: 800;
         color: #0F172A;
         line-height: 1.15;
     }
     .kpi-subtext {
-        font-size: 0.7rem;
+        font-size: 0.72rem;
         font-weight: 500;
         color: #64748B;
-        margin-top: 3px;
+        margin-top: 4px;
     }
 
     .section-title-wrap {
-        margin-top: 14px;
-        margin-bottom: 10px;
+        margin-top: 18px;
+        margin-bottom: 12px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         border-bottom: 2px solid #F1F5F9;
-        padding-bottom: 4px;
+        padding-bottom: 6px;
     }
     .section-title-text {
-        font-size: 1.02rem;
+        font-size: 1.08rem;
         font-weight: 700;
         color: #1E293B;
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
     }
 </style>
 """
@@ -327,17 +327,17 @@ def detect_field(columns_list, candidates):
 
 
 # ------------------------------------------------------------------------------
-# 3. DATA STANDARDIZATION & DERIVATION ENGINE
+# 3. HIGH-PERFORMANCE DATA STANDARDIZATION & PRESUMPTIVE ENGINE
 # ------------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=None, file_hier_name=None):
     """
     Ingests Screening Data Sheet and optional HWC Master Hierarchy.
-    Calculates all metrics from the Screening Data Sheet:
+    Calculates all metrics exclusively from the Screening Data Sheet:
     - AI Preference Presumptive: Column L (AI Preference == 'presumptive')
     - NTEP Presumptive: Column Q (NTEP Result == 'presumptive')
     - CHO Override: Column BA (Overrule by HWC == 1 and AI/NTEP non-presumptive)
-    - Total Unique Presumptive: Deduplicated union of AI, NTEP, and CHO Override
+    - Total Unique Presumptive: Strict deduplicated union of AI, NTEP, and CHO Override
     - TB Status (Column T):
         * PRESUMPTIVE_OPEN -> Presumptive Open
         * PRESUMPTIVE_CLOSED -> Presumptive Closed
@@ -381,7 +381,7 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     else:
         c_status = detect_field(cols_all, ["tb status", "tb_status", "status"])
 
-    # Column BA (Index 52) - Overrule by HWC
+    # Column BA (Index 52) - Overrule by HWC / CHO Override
     if len(cols_all) > 52 and ("overrule" in clean_header(str(cols_all[52])) or "hwc" in clean_header(str(cols_all[52]))):
         c_overrule = cols_all[52]
     else:
@@ -399,7 +399,7 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["Block_Clean"] = df[c_block].fillna("Unknown").astype(str).str.strip().str.title() if c_block else "Unknown"
     df["Facility_Clean"] = df[c_hwc].fillna("Unknown").astype(str).str.strip().str.title() if c_hwc else "Unknown"
 
-    # Clean CHO Name from Column G
+    # Map CHO Name from Column G
     if c_cho and c_cho in df.columns:
         df["CHO_Clean"] = df[c_cho].astype(str).str.strip().str.title()
         df.loc[df["CHO_Clean"].isin(["", "Nan", "None", "Null", "0"]), "CHO_Clean"] = "Not Available"
@@ -408,17 +408,16 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
 
     df["str_id"] = df[c_id].astype(str).str.strip() if c_id else df.index.astype(str)
 
-    # Presumptive Breakdown & Overrule Check
+    # Presumptive Classification Breakdown
     ai_series = df[c_ai].fillna("").astype(str).str.strip().str.lower() if c_ai and c_ai in df.columns else pd.Series([""] * len(df))
     ntep_series = df[c_ntep].fillna("").astype(str).str.strip().str.lower() if c_ntep and c_ntep in df.columns else pd.Series([""] * len(df))
-    
+
     if c_overrule and c_overrule in df.columns:
         ovr_series = df[c_overrule].fillna("0").astype(str).str.strip()
         is_ovr_active = ovr_series.isin(["1", "1.0", "True", "true", "yes", "Yes"])
     else:
         is_ovr_active = pd.Series([False] * len(df))
 
-    # Presumptive components
     df["is_ai_pres"] = (ai_series == "presumptive").astype(int)
     df["is_ntep_pres"] = (ntep_series == "presumptive").astype(int)
     df["is_cho_override"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 0) & is_ovr_active).astype(int)
@@ -494,9 +493,8 @@ def main():
             unsafe_allow_html=True,
         )
 
-        # File Ingestion Section
         st.markdown('<div class="sidebar-category-header">📁 1. Data Ingestion</div>', unsafe_allow_html=True)
-        
+
         st.markdown('<div class="filter-item-label">Screening Data Sheet</div>', unsafe_allow_html=True)
         up_all = st.file_uploader(
             "Screening Data Sheet",
@@ -546,7 +544,7 @@ def main():
     with st.sidebar:
         st.markdown('<div class="sidebar-category-header">🔍 2. Analytical Filters</div>', unsafe_allow_html=True)
 
-        # A. Date Filter (Compact Side-by-Side Boxes with Prominent Labels)
+        # Date Range Filter
         dates_valid = df_screening["reg_date_clean"].dropna()
         if not dates_valid.empty:
             min_avail, max_avail = dates_valid.min().date(), dates_valid.max().date()
@@ -563,7 +561,7 @@ def main():
         # Build Geography Reference from Master or Screening
         geo_ref = df_master_hwc if df_master_hwc is not None else df_screening
 
-        # B. District Filter
+        # District Filter
         st.markdown('<div class="filter-item-label">Select District</div>', unsafe_allow_html=True)
         avail_districts = sorted([d for d in geo_ref["District_Clean"].unique() if d != "Unknown"])
         sel_districts = st.multiselect(
@@ -610,7 +608,6 @@ def main():
             label_visibility="collapsed",
         )
 
-        # Compact Reset Button
         st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
         if st.button("🔄 Reset All Filters", use_container_width=True):
             st.rerun()
@@ -633,7 +630,6 @@ def main():
     # --------------------------------------------------------------------------
     # ACCURATE FACILITY-LEVEL AGGREGATION
     # --------------------------------------------------------------------------
-    # 1. Base HWC Directory (Master List if available, otherwise Screening List)
     if df_master_hwc is not None:
         base_hwc = df_master_hwc.copy()
         if sel_districts:
@@ -651,7 +647,6 @@ def main():
         if sel_hwcs:
             base_hwc = base_hwc[base_hwc["Facility_Clean"].isin(sel_hwcs)]
 
-    # 2. Map CHO Name strictly from Column G of Screening Data
     cho_mapping = (
         f_screen[f_screen["CHO_Clean"] != "Not Available"]
         .groupby("Facility_Clean")["CHO_Clean"]
@@ -660,7 +655,6 @@ def main():
         .rename(columns={"CHO_Clean": "Active_CHO_Name"})
     )
 
-    # 3. Aggregate Metrics from Screening Data Sheet
     screen_summary = (
         f_screen.groupby("Facility_Clean")
         .agg(
@@ -679,7 +673,6 @@ def main():
         .reset_index()
     )
 
-    # 4. Merge Base Directory with Metrics
     hwc_matrix = pd.merge(base_hwc, screen_summary, on="Facility_Clean", how="left")
     hwc_matrix = pd.merge(hwc_matrix, cho_mapping, on="Facility_Clean", how="left")
 
@@ -723,7 +716,6 @@ def main():
     total_tested = int(hwc_matrix["Total_Tested"].sum())
     total_diagnosed = int(hwc_matrix["Total_Diagnosed"].sum())
 
-    # Rates
     pres_yield = (total_presumptive / max(total_screenings, 1)) * 100
     testing_rate = (total_tested / max(total_presumptive, 1)) * 100
     diagnosis_yield = (total_diagnosed / max(total_tested, 1)) * 100 if total_tested > 0 else 0.0
@@ -791,7 +783,7 @@ def main():
     )
 
     # ==========================================================================
-    # TAB 1: HWC-WISE PERFORMANCE REPORT
+    # TAB 1: HWC-WISE PERFORMANCE REPORT (MATPLOTLIB-FREE, CLEAN FORMATTING)
     # ==========================================================================
     with tab_hwc:
         st.markdown(
@@ -853,6 +845,7 @@ def main():
         else:
             display_hwc_report = final_hwc_report
 
+        # Formatted cleanly without matplotlib background_gradient dependency
         st.dataframe(
             display_hwc_report.style.format(
                 {
@@ -866,10 +859,7 @@ def main():
                     "Total Tested": "{:,}",
                     "Total Diagnosed": "{:,}",
                 }
-            ).background_gradient(cmap="Blues", subset=["Total Screening"])
-            .background_gradient(cmap="YlOrRd", subset=["Total Presumptive"])
-            .background_gradient(cmap="Purples", subset=["Total Tested"])
-            .background_gradient(cmap="Greens", subset=["Total Diagnosed"]),
+            ),
             use_container_width=True,
             hide_index=True,
             height=520,
