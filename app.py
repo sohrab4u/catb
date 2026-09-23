@@ -1,1340 +1,1174 @@
-import streamlit as st
-import pandas as pd
+"""
+================================================================================
+CATB Screening & Surveillance Analytics Platform (Compact UI Edition)
+================================================================================
+Enterprise TB Active Case Finding surveillance system featuring:
+- Streamlined, high-visibility sidebar layout with well-defined container boxes
+- Prominent filter section headers with zero wasted vertical space
+- Compact side-by-side date selectors and multi-select filters
+- Complete HWC Master List integration with zero-screening facility tracking
+- Presumptive calculation from Column L (AI), Column Q (NTEP), and Column BA (CHO Override)
+- TB Status metrics from Column T (Open, Closed, Tested, Diagnosed)
+"""
+
+import datetime
+import io
+import re
 import numpy as np
+import openpyxl
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from io import BytesIO
-import datetime
-import re
+import streamlit as st
 
-# ==========================================
-# 1. PAGE SETUP & ADVANCED ENTERPRISE CSS
-# ==========================================
+# ------------------------------------------------------------------------------
+# 1. PAGE SETUP & ENHANCED SIDEBAR CSS (HIGH VISIBILITY & COMPACT)
+# ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Enterprise Health Screening & Facility Activation MIS",
-    page_icon="📋",
+    page_title="CATB Screening & Surveillance Portal",
+    page_icon="🩺",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-    <style>
-    /* Base Workspace Background */
-    .main { background-color: #F8FAFC; }
+ENTERPRISE_THEME_CSS = """
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     
-    /* Header Fine-Tuning */
-    .header-title { color: #0F172A; font-weight: 800; font-size: 30px !important; margin-top: -35px; margin-bottom: 4px; }
-    .header-subtitle { color: #475569; font-size: 14px; margin-bottom: 20px; font-weight: 400; }
-    
-    /* Section Headings */
-    h2, h3 { color: #1E3A8A; font-weight: 700; margin-top: 15px; border-bottom: 2px solid #E2E8F0; padding-bottom: 6px; }
-    h4 { color: #1E293B; font-weight: 600; margin-top: 10px; }
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
 
-    /* High-Visibility KPI Cards */
-    .kpi-container {
+    /* Main Container Padding */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 2rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
+        max-width: 100% !important;
+    }
+
+    /* ---------------- SIDEBAR REDESIGN & OPTIMIZATION ---------------- */
+    [data-testid="stSidebar"] {
+        background-color: #F8FAFC !important;
+        border-right: 1.5px solid #E2E8F0 !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        padding-top: 0.6rem !important;
+        padding-left: 0.8rem !important;
+        padding-right: 0.8rem !important;
+    }
+    
+    /* Compact Sidebar Brand */
+    .sidebar-brand {
         display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 15px;
+        align-items: center;
+        gap: 8px;
+        padding-bottom: 6px;
+        border-bottom: 1.5px solid #E2E8F0;
+        margin-bottom: 8px;
     }
-    .kpi-card {
-        background: #FFFFFF;
-        padding: 16px 20px;
-        border-radius: 10px;
-        border-top: 5px solid #2563EB;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.04);
-        flex: 1;
-        min-width: 185px;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
+    .sidebar-brand-title {
+        font-size: 1rem;
+        font-weight: 800;
+        color: #0F172A;
+        line-height: 1.1;
     }
-    .kpi-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+    .sidebar-brand-sub {
+        font-size: 0.7rem;
+        color: #64748B;
+        font-weight: 600;
     }
-    .kpi-title { font-size: 11px; font-weight: 700; color: #64748B; text-transform: uppercase; letter-spacing: 0.6px; }
-    .kpi-value { font-size: 26px; font-weight: 800; color: #1E3A8A; margin-top: 4px; }
-    .kpi-subtext { font-size: 11px; color: #94A3B8; margin-top: 2px; }
 
-    /* Compact Sidebar */
-    section[data-testid="stSidebar"] {
-        background-color: #0F172A !important;
-        border-right: 1px solid #1E293B;
+    /* Section Category Headings */
+    .sidebar-category-header {
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #0369A1;
+        background: #E0F2FE;
+        padding: 4px 8px;
+        border-radius: 6px;
+        margin-top: 8px;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
     }
-    
-    section[data-testid="stSidebar"] div[data-testid="stFileUploader"] {
-        padding: 0px !important;
-        margin-bottom: 8px !important;
+
+    /* Prominent Filter Item Headers */
+    .filter-item-label {
+        font-size: 0.74rem !important;
+        font-weight: 700 !important;
+        color: #1E293B !important;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 5px !important;
+        margin-bottom: 2px !important;
+        display: flex;
+        align-items: center;
+        gap: 4px;
     }
-    section[data-testid="stSidebar"] div[data-testid="stFileUploader"] section {
-        padding: 6px 10px !important;
-        background-color: #1E293B !important;
-        border: 1px dashed #3B82F6 !important;
+
+    /* Enhanced, Well-Defined Filter Input Boxes */
+    [data-testid="stMultiSelect"] > div,
+    [data-testid="stDateInput"] > div,
+    [data-testid="stSelectbox"] > div {
+        background-color: #FFFFFF !important;
+        border: 1.5px solid #CBD5E1 !important;
         border-radius: 8px !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05) !important;
+        transition: all 0.2s ease-in-out !important;
+        min-height: 38px !important;
     }
-    section[data-testid="stSidebar"] div[data-testid="stFileUploader"] section div {
+    [data-testid="stMultiSelect"] > div:hover,
+    [data-testid="stDateInput"] > div:hover,
+    [data-testid="stSelectbox"] > div:hover {
+        border-color: #0284C7 !important;
+        box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15) !important;
+    }
+    /* Multi-select selection chip tags */
+    [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+        background-color: #0F172A !important;
+        color: #FFFFFF !important;
+        border-radius: 4px !important;
+        font-weight: 600 !important;
+        font-size: 0.72rem !important;
+        padding: 1px 5px !important;
+    }
+
+    /* Ultra-Compact Upload Boxes */
+    [data-testid="stFileUploaderInstructions"],
+    [data-testid="stFileUploaderDropzoneInstructions"] {
         display: none !important;
     }
-    section[data-testid="stSidebar"] div[data-testid="stFileUploader"] section button {
-        width: 100% !important;
-        margin: 0 !important;
-        padding: 4px !important;
-        font-size: 12px !important;
+    [data-testid="stFileUploader"] {
+        margin-bottom: 4px !important;
     }
-    
-    section[data-testid="stSidebar"] .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 1rem !important;
-    }
-    
-    section[data-testid="stSidebar"] h1, 
-    section[data-testid="stSidebar"] h2, 
-    section[data-testid="stSidebar"] h3, 
-    section[data-testid="stSidebar"] h4, 
-    section[data-testid="stSidebar"] p,
-    section[data-testid="stSidebar"] label,
-    section[data-testid="stSidebar"] .stMarkdown,
-    section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"] p {
-        color: #F8FAFC !important;
-    }
-    
-    .sidebar-header-custom {
-        font-size: 14px !important;
-        font-weight: 700 !important;
-        color: #3B82F6 !important;
-        margin-top: -10px !important;
-        margin-bottom: 10px !important;
-        letter-spacing: 0.5px;
-        text-transform: uppercase;
-        border-bottom: 1px solid #1E293B;
-        padding-bottom: 5px;
-    }
-
-    section[data-testid="stSidebar"] div[data-testid="stWidgetLabel"] {
-        margin-bottom: -2px !important;
-    }
-    
-    section[data-testid="stSidebar"] div.stButton > button {
-        background-color: #2563EB !important;
-        color: #FFFFFF !important;
+    [data-testid="stFileUploaderDropzone"] {
+        padding: 4px 8px !important;
+        min-height: 44px !important;
+        max-height: 46px !important;
         border-radius: 8px !important;
-        font-weight: 700 !important;
-        border: none !important;
-        box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.3) !important;
-        margin-top: 8px !important;
+        border: 1.5px dashed #94A3B8 !important;
+        background-color: #FFFFFF !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
-    section[data-testid="stSidebar"] div.stButton > button:hover {
-        background-color: #1D4ED8 !important;
+    [data-testid="stFileUploaderDropzone"]:hover {
+        border-color: #0284C7 !important;
+        background-color: #F0F9FF !important;
     }
-    
-    .stDataFrame { background-color: #FFFFFF; border-radius: 8px; padding: 5px; }
-    </style>
-    """, unsafe_allow_html=True)
+    [data-testid="stFileUploaderDropzone"] button {
+        padding: 2px 8px !important;
+        font-size: 0.72rem !important;
+        height: 26px !important;
+    }
+    [data-testid="stFileUploader"] section {
+        padding: 2px 4px !important;
+        margin-top: 1px !important;
+    }
 
-st.markdown('<div class="header-title">📋 CATB Health Screening & Facility Activation MIS Portal</div>', unsafe_allow_html=True)
-st.markdown('<div class="header-subtitle">Master facility reconciliation, full HWC activation directory, clinical presumptive pathways, and Nikshay verification</div>', unsafe_allow_html=True)
+    /* Main Dashboard Header */
+    .app-header {
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        padding: 14px 20px;
+        border-radius: 12px;
+        color: white;
+        margin-bottom: 14px;
+        border: 1px solid #334155;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+    .app-header-title {
+        font-size: 1.35rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: #FFFFFF;
+    }
+    .app-header-subtitle {
+        color: #94A3B8;
+        font-size: 0.8rem;
+        margin-top: 2px;
+    }
+    .system-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(16, 185, 129, 0.15);
+        color: #34D399;
+        border: 1px solid rgba(52, 211, 153, 0.3);
+        padding: 4px 10px;
+        border-radius: 9999px;
+        font-size: 0.74rem;
+        font-weight: 600;
+    }
+    .pulse-dot {
+        width: 6px;
+        height: 6px;
+        background-color: #10B981;
+        border-radius: 50%;
+    }
 
-# ==========================================
-# 2. STRING & FLAG PARSING UTILITIES
-# ==========================================
-def clean_str(val):
-    if pd.isna(val):
+    /* Modern KPI Cards */
+    .kpi-grid-card {
+        background: #FFFFFF;
+        border-radius: 12px;
+        padding: 12px 14px;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+        position: relative;
+        overflow: hidden;
+        transition: transform 0.15s ease-in-out;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .kpi-grid-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 14px -3px rgba(0, 0, 0, 0.06);
+        border-color: #CBD5E1;
+    }
+    .kpi-accent-bar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+    }
+    .kpi-top-meta {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 3px;
+    }
+    .kpi-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748B;
+    }
+    .kpi-icon-bubble {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.9rem;
+    }
+    .kpi-metric-value {
+        font-size: 1.55rem;
+        font-weight: 800;
+        color: #0F172A;
+        line-height: 1.15;
+    }
+    .kpi-subtext {
+        font-size: 0.7rem;
+        font-weight: 500;
+        color: #64748B;
+        margin-top: 3px;
+    }
+
+    .section-title-wrap {
+        margin-top: 14px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 2px solid #F1F5F9;
+        padding-bottom: 4px;
+    }
+    .section-title-text {
+        font-size: 1.02rem;
+        font-weight: 700;
+        color: #1E293B;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+</style>
+"""
+st.markdown(ENTERPRISE_THEME_CSS, unsafe_allow_html=True)
+
+
+# ------------------------------------------------------------------------------
+# 2. FILE READER & FUZZY COLUMN DETECTOR
+# ------------------------------------------------------------------------------
+def clean_header(val: str) -> str:
+    if not isinstance(val, str):
         return ""
-    s = str(val).strip().lower()
-    s = re.sub(r'[^\w\s]', '', s)
-    s = re.sub(r'\s+', '', s)
-    s = re.sub(r'(schwc|hwc|sc|subcenter|subcentre|center|centre|shc|phc|aam|ayushmandararogyamandir)', '', s)
-    return s.strip()
+    return re.sub(r"[_\-\s]+", " ", val).strip().lower()
 
-def parse_robust_datetime(series):
-    """Accurately parses Excel numeric serials, timestamps, and Indian/UK formatted dates."""
-    def parse_single(val):
-        if pd.isna(val):
-            return pd.NaT
-        if isinstance(val, (datetime.datetime, datetime.date, pd.Timestamp)):
-            return pd.Timestamp(val)
-        if isinstance(val, (int, float)):
-            try:
-                return pd.to_datetime('1899-12-30') + pd.to_timedelta(val, 'D')
-            except Exception:
-                pass
-        s = str(val).strip()
-        if s.lower() in ['', 'nan', 'none', 'null', 'nat']:
-            return pd.NaT
-        for fmt in ['%Y-%m-%d %H:%M:%S', '%d-%m-%Y %H:%M:%S', '%Y-%m-%d %H:%M', '%d-%m-%Y %H:%M', '%d/%m/%Y %H:%M:%S', '%d/%m/%Y %I:%M %p', '%d-%m-%Y', '%Y-%m-%d']:
-            try:
-                return pd.to_datetime(s, format=fmt)
-            except Exception:
-                continue
-        return pd.to_datetime(s, errors='coerce', dayfirst=True)
 
-    return series.apply(parse_single)
+def detect_field(columns_list, candidates):
+    clean_map = {clean_header(c): c for c in columns_list}
+    for cand in candidates:
+        cc = clean_header(cand)
+        if cc in clean_map:
+            return clean_map[cc]
+    for cand in candidates:
+        cc = clean_header(cand)
+        for col_clean, original in clean_map.items():
+            if cc in col_clean:
+                return original
+    return None
 
-def parse_flag_or_num(series):
-    """Accurately extracts affirmative/presumptive flags as 1/0 integers."""
-    if series is None or series.empty:
-        return pd.Series(0, index=series.index if series is not None else [0])
-    
-    numeric_s = pd.to_numeric(series, errors='coerce')
-    is_numeric = numeric_s.notnull()
-    
-    result = pd.Series(0, index=series.index)
-    result[is_numeric] = (numeric_s[is_numeric] > 0).astype(int)
-    
-    str_vals = series.astype(str).str.strip().str.lower()
-    positive_flags = str_vals.isin([
-        'presumptive', 'prisumptive', 'yes', 'y', '1', '1.0', 
-        'true', 'positive', 'overrule', 'overruled', 'generated', 'done', 'created'
-    ])
-    result[positive_flags] = 1
-    return result
 
-def parse_nikshay_id(series):
-    """
-    Checks Nikshay ID column.
-    If the cell contains any numeric digit, Nikshay ID was generated (1).
-    If null, blank, 0, or non-numeric placeholder, not generated (0).
-    """
-    if series is None or series.empty:
-        return pd.Series(0, index=series.index if series is not None else [0])
-    
-    def check_id(val):
-        if pd.isna(val):
-            return 0
-        s = str(val).strip()
-        if s.lower() in ['', 'nan', 'none', 'null', '-', '0', '0.0', 'na', 'n/a', 'pending', 'not generated']:
-            return 0
-        if re.search(r'\d', s):
-            try:
-                if float(s) == 0:
-                    return 0
-            except ValueError:
-                pass
-            return 1
-        return 0
-
-    return series.apply(check_id)
-
-# ==========================================
-# 3. FACILITY ENROLLMENT MASTER INGESTION (EXCEL & CSV)
-# ==========================================
+# ------------------------------------------------------------------------------
+# 3. DATA STANDARDIZATION & DERIVATION ENGINE
+# ------------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
-def process_facility_enrollment(file_buffer):
-    try:
-        fname = getattr(file_buffer, 'name', '').lower()
-        if fname.endswith('.csv'):
-            try:
-                df = pd.read_csv(file_buffer, encoding='utf-8')
-            except UnicodeDecodeError:
-                file_buffer.seek(0)
-                df = pd.read_csv(file_buffer, encoding='latin1')
-        else:
-            xls = pd.ExcelFile(file_buffer, engine='openpyxl')
-            first_sheet = xls.sheet_names[0]
-            df = xls.parse(first_sheet)
+def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=None, file_hier_name=None):
+    """
+    Ingests Screening Data Sheet and optional HWC Master Hierarchy.
+    Calculates all metrics from the Screening Data Sheet:
+    - AI Preference Presumptive: Column L (AI Preference == 'presumptive')
+    - NTEP Presumptive: Column Q (NTEP Result == 'presumptive')
+    - CHO Override: Column BA (Overrule by HWC == 1 and AI/NTEP non-presumptive)
+    - Total Unique Presumptive: Deduplicated union of AI, NTEP, and CHO Override
+    - TB Status (Column T):
+        * PRESUMPTIVE_OPEN -> Presumptive Open
+        * PRESUMPTIVE_CLOSED -> Presumptive Closed
+        * DIAGNOSED_ON_TREATMENT -> Total Diagnosed
+        * Total Tested = PRESUMPTIVE_CLOSED + DIAGNOSED_ON_TREATMENT
+    """
+    if file_all_name.lower().endswith(".csv"):
+        df_all = pd.read_csv(io.BytesIO(file_all_bytes), low_memory=False)
+    else:
+        df_all = pd.read_excel(io.BytesIO(file_all_bytes))
 
-        df.columns = [str(c).strip() for c in df.columns]
+    cols_all = list(df_all.columns)
 
-        col_map = {}
-        for c in df.columns:
-            cl = c.lower().strip()
-            if cl in ['hwc', 'facility', 'facility name', 'facility_name', 'center', 'health facility']:
-                if 'facility' not in col_map.values():
-                    col_map[c] = 'facility'
-            elif cl in ['block', 'block_name', 'tehsil']:
-                col_map[c] = 'block'
-            elif cl in ['district', 'dist', 'zila']:
-                col_map[c] = 'district'
-            elif cl in ['hcw_id', 'hwc_id', 'facility_id']:
-                col_map[c] = 'facility_id'
-            elif cl in ['nin', 'nin_code']:
-                col_map[c] = 'nin'
-            elif 'catchment' in cl:
-                col_map[c] = 'catchment_population'
+    c_date = detect_field(cols_all, ["reg date", "date", "created at", "screening date"])
+    c_id = detect_field(cols_all, ["id", "uuid", "patient id", "beneficiary id"])
+    c_dist = detect_field(cols_all, ["district", "district name"])
+    c_block = detect_field(cols_all, ["block", "block name", "tehsil"])
+    c_hwc = detect_field(cols_all, ["hwc", "facility", "facility name", "health center"])
 
-        df.rename(columns=col_map, inplace=True)
-        
-        for req in ['facility', 'block', 'district']:
-            if req not in df.columns:
-                df[req] = "Unknown"
+    # Column G (Index 6) is the CHO Name
+    if len(cols_all) > 6 and "cho" in clean_header(str(cols_all[6])):
+        c_cho = cols_all[6]
+    else:
+        c_cho = detect_field(cols_all, ["cho name", "cho", "staff name", "provider"])
 
-        for col in ['facility', 'block', 'district']:
-            df[col] = df[col].astype(str).str.strip().str.title()
-            df[col] = df[col].replace({'Nan': 'Unknown', 'None': 'Unknown', '': 'Unknown'})
+    # Column L (Index 11) - AI Preference
+    if len(cols_all) > 11 and "ai" in clean_header(str(cols_all[11])):
+        c_ai = cols_all[11]
+    else:
+        c_ai = detect_field(cols_all, ["ai preference", "ai result", "ai"])
 
-        df['clean_facility'] = df['facility'].apply(clean_str)
-        df['clean_block'] = df['block'].apply(clean_str)
-        df['clean_district'] = df['district'].apply(clean_str)
-        df['match_key_dist_blk_fac'] = df['clean_district'] + "_" + df['clean_block'] + "_" + df['clean_facility']
-        df['match_key_blk_fac'] = df['clean_block'] + "_" + df['clean_facility']
+    # Column Q (Index 16) - NTEP Result
+    if len(cols_all) > 16 and "ntep" in clean_header(str(cols_all[16])):
+        c_ntep = cols_all[16]
+    else:
+        c_ntep = detect_field(cols_all, ["ntep result", "ntep"])
 
-        return df
-    except Exception as e:
-        st.error(f"Facility Enrollment master parsing failed: {str(e)}")
-        return None
+    # Column T (Index 19) - TB Status
+    if len(cols_all) > 19 and "status" in clean_header(str(cols_all[19])):
+        c_status = cols_all[19]
+    else:
+        c_status = detect_field(cols_all, ["tb status", "tb_status", "status"])
 
-# ==========================================
-# 4. SCREENING DATA INGESTION ENGINE (EXCEL & CSV)
-# ==========================================
-@st.cache_data(show_spinner=False)
-def process_health_workbook(file_buffer):
-    all_sheets_map = {}
-    sheet_quality_summaries = {}
-    combined_records = []
+    # Column BA (Index 52) - Overrule by HWC
+    if len(cols_all) > 52 and ("overrule" in clean_header(str(cols_all[52])) or "hwc" in clean_header(str(cols_all[52]))):
+        c_overrule = cols_all[52]
+    else:
+        c_overrule = detect_field(cols_all, ["overrule by hwc", "overrule", "hwc overrule", "cho override"])
+
+    df = df_all.copy()
+
+    # Parse Registration Date
+    if c_date and c_date in df.columns:
+        df["reg_date_clean"] = pd.to_datetime(df[c_date], errors="coerce")
+    else:
+        df["reg_date_clean"] = pd.NaT
+
+    df["District_Clean"] = df[c_dist].fillna("Unknown").astype(str).str.strip().str.title() if c_dist else "Unknown"
+    df["Block_Clean"] = df[c_block].fillna("Unknown").astype(str).str.strip().str.title() if c_block else "Unknown"
+    df["Facility_Clean"] = df[c_hwc].fillna("Unknown").astype(str).str.strip().str.title() if c_hwc else "Unknown"
+
+    # Clean CHO Name from Column G
+    if c_cho and c_cho in df.columns:
+        df["CHO_Clean"] = df[c_cho].astype(str).str.strip().str.title()
+        df.loc[df["CHO_Clean"].isin(["", "Nan", "None", "Null", "0"]), "CHO_Clean"] = "Not Available"
+    else:
+        df["CHO_Clean"] = "Not Available"
+
+    df["str_id"] = df[c_id].astype(str).str.strip() if c_id else df.index.astype(str)
+
+    # Presumptive Breakdown & Overrule Check
+    ai_series = df[c_ai].fillna("").astype(str).str.strip().str.lower() if c_ai and c_ai in df.columns else pd.Series([""] * len(df))
+    ntep_series = df[c_ntep].fillna("").astype(str).str.strip().str.lower() if c_ntep and c_ntep in df.columns else pd.Series([""] * len(df))
     
-    try:
-        fname = getattr(file_buffer, 'name', '').lower()
-        if fname.endswith('.csv'):
-            try:
-                raw_csv = pd.read_csv(file_buffer, header=None, nrows=10, encoding='utf-8')
-            except UnicodeDecodeError:
-                file_buffer.seek(0)
-                raw_csv = pd.read_csv(file_buffer, header=None, nrows=10, encoding='latin1')
+    if c_overrule and c_overrule in df.columns:
+        ovr_series = df[c_overrule].fillna("0").astype(str).str.strip()
+        is_ovr_active = ovr_series.isin(["1", "1.0", "True", "true", "yes", "Yes"])
+    else:
+        is_ovr_active = pd.Series([False] * len(df))
 
-            skip_rows_computed = 0
-            for idx, row in raw_csv.iterrows():
-                row_str = row.astype(str).str.cat(sep=" ").lower()
-                if any(k in row_str for k in ["district", "hwc", "block", "screening", "ntep", "ai preference", "reg date", "nikshay"]):
-                    skip_rows_computed = idx
-                    break
-            
-            file_buffer.seek(0)
-            try:
-                df = pd.read_csv(file_buffer, skiprows=skip_rows_computed, encoding='utf-8')
-            except UnicodeDecodeError:
-                file_buffer.seek(0)
-                df = pd.read_csv(file_buffer, skiprows=skip_rows_computed, encoding='latin1')
+    # Presumptive components
+    df["is_ai_pres"] = (ai_series == "presumptive").astype(int)
+    df["is_ntep_pres"] = (ntep_series == "presumptive").astype(int)
+    df["is_cho_override"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 0) & is_ovr_active).astype(int)
+    df["is_total_presumptive"] = ((df["is_ai_pres"] == 1) | (df["is_ntep_pres"] == 1) | (df["is_cho_override"] == 1)).astype(int)
 
-            sheet_names = ["CSV_Data"]
-            sheets_data = {"CSV_Data": df}
-        else:
-            xls = pd.ExcelFile(file_buffer, engine='openpyxl')
-            sheet_names = xls.sheet_names
-            sheets_data = {}
-            for sh in sheet_names:
-                df_check = xls.parse(sh, nrows=5, header=None)
-                if df_check.empty:
-                    continue
-                skip_rows_computed = 0
-                for idx, row in df_check.iterrows():
-                    row_str = row.astype(str).str.cat(sep=" ").lower()
-                    if any(k in row_str for k in ["district", "hwc", "block", "screening", "ntep", "ai preference", "reg date", "nikshay"]):
-                        skip_rows_computed = idx
-                        break
-                sheets_data[sh] = xls.parse(sh, skiprows=skip_rows_computed)
-        
-        for sheet, df in sheets_data.items():
-            if df.empty:
-                continue
-                
-            df.columns = [str(c).strip() for c in df.columns]
-            
-            # Locate Columns by Name or Position (Col L = 11, Col Q = 16, Col X = 23, Col BA = 52)
-            col_l_series = None
-            col_q_series = None
-            col_x_series = None
-            col_ba_series = None
-            col_date_series = None
-            
-            for idx, col_name in enumerate(df.columns):
-                c_low = col_name.lower()
-                if any(k in c_low for k in ["ai preference", "ai_preference", "ai presumptive", "ai preference for"]):
-                    col_l_series = df[col_name]
-                elif any(k in c_low for k in ["ntep result", "ntep_result", "ntep"]):
-                    col_q_series = df[col_name]
-                elif any(k in c_low for k in ["nikshay_id", "nikshay id", "nikshayid", "nikshay id generated"]):
-                    col_x_series = df[col_name]
-                elif any(k in c_low for k in ["overrule by hwc", "overrule", "override"]):
-                    col_ba_series = df[col_name]
-                elif any(k in c_low for k in ["reg date", "date", "created on", "entry date", "screening date"]):
-                    if col_date_series is None:
-                        col_date_series = df[col_name]
+    # TB Status Progression (Column T)
+    status_series = df[c_status].fillna("").astype(str).str.strip().str.upper() if c_status and c_status in df.columns else pd.Series([""] * len(df))
 
-            if col_l_series is None and len(df.columns) >= 12:
-                col_l_series = df.iloc[:, 11]
-            if col_q_series is None and len(df.columns) >= 17:
-                col_q_series = df.iloc[:, 16]
-            if col_x_series is None and len(df.columns) >= 24:
-                col_x_series = df.iloc[:, 23]
-            if col_ba_series is None and len(df.columns) >= 53:
-                col_ba_series = df.iloc[:, 52]
-            if col_date_series is None and len(df.columns) >= 1:
-                for c in df.columns:
-                    if 'date' in c.lower() or 'time' in c.lower():
-                        col_date_series = df[c]
-                        break
+    df["is_presumptive_open"] = (status_series == "PRESUMPTIVE_OPEN").astype(int)
+    df["is_presumptive_closed"] = (status_series == "PRESUMPTIVE_CLOSED").astype(int)
+    df["is_diagnosed"] = (status_series == "DIAGNOSED_ON_TREATMENT").astype(int)
+    df["is_tested"] = (status_series.isin(["PRESUMPTIVE_CLOSED", "DIAGNOSED_ON_TREATMENT"])).astype(int)
 
-            # Schema Normalization
-            attribute_standards = {
-                'district': ['District', 'dist', 'zila'],
-                'block': ['Block', 'block_name', 'tehsil'],
-                'facility': ['HWC', 'Facility', 'center', 'health_facility', 'facility_name', 'Subcenter'],
-                'cho_name': ['CHO name', 'cho', 'operator', 'community_health_officer', 'CHO'],
-                'facility_id': ['hcw_id', 'hwc_id', 'facility_id']
-            }
-            
-            for standard_key, alternatives in attribute_standards.items():
-                if standard_key not in df.columns:
-                    for alt in alternatives:
-                        for col in df.columns:
-                            if alt.lower() == col.lower():
-                                df.rename(columns={col: standard_key}, inplace=True)
-                                break
-                        if standard_key in df.columns:
-                            break
-
-            # Parse Datetime
-            if col_date_series is not None:
-                df['screening_timestamp'] = parse_robust_datetime(col_date_series)
-            elif 'reg_date' in df.columns:
-                df['screening_timestamp'] = parse_robust_datetime(df['reg_date'])
+    # Master Hierarchy Integration
+    df_master_hwc = None
+    if file_hier_bytes:
+        try:
+            if file_hier_name.lower().endswith(".csv"):
+                df_h = pd.read_csv(io.BytesIO(file_hier_bytes), low_memory=False)
             else:
-                df['screening_timestamp'] = pd.Timestamp(datetime.datetime.now())
-            
-            df['reg_date'] = df['screening_timestamp'].fillna(pd.Timestamp(datetime.date.today()))
-            
-            for text_col in ['district', 'block', 'facility', 'cho_name']:
-                if text_col not in df.columns:
-                    df[text_col] = "Unknown"
-                df[text_col] = df[text_col].astype(str).str.strip().str.title()
-                df[text_col] = df[text_col].replace({'Nan': 'Unknown', 'None': 'Unknown', '': 'Unknown'})
+                df_h = pd.read_excel(io.BytesIO(file_hier_bytes))
+            h_cols = list(df_h.columns)
+            h_fac = detect_field(h_cols, ["hwc", "facility", "facility name", "health center"])
+            h_dist = detect_field(h_cols, ["district", "district name"])
+            h_block = detect_field(h_cols, ["block", "block name", "tehsil"])
 
-            # Compute Presumptive Pathways
-            df['ai_presumptive_flag'] = parse_flag_or_num(col_l_series) if col_l_series is not None else 0
-            df['ntep_presumptive_flag'] = parse_flag_or_num(col_q_series) if col_q_series is not None else 0
-            df['hwc_overrule_flag'] = parse_flag_or_num(col_ba_series) if col_ba_series is not None else 0
+            if h_fac:
+                df_h["Facility_Clean"] = df_h[h_fac].fillna("Unknown").astype(str).str.strip().str.title()
+                df_h["District_Clean"] = df_h[h_dist].fillna("Unknown").astype(str).str.strip().str.title() if h_dist else "Unknown"
+                df_h["Block_Clean"] = df_h[h_block].fillna("Unknown").astype(str).str.strip().str.title() if h_block else "Unknown"
+                df_master_hwc = df_h[["District_Clean", "Block_Clean", "Facility_Clean"]].drop_duplicates(subset=["Facility_Clean"])
+        except Exception:
+            pass
 
-            # Total Presumptive: Overruled by HWC (BA=1) OR Clinical (AI / NTEP)
-            df['presumptive_clinical'] = ((df['ai_presumptive_flag'] == 1) | (df['ntep_presumptive_flag'] == 1)).astype(int)
-            df['presumptive_num'] = ((df['presumptive_clinical'] == 1) | (df['hwc_overrule_flag'] == 1)).astype(int)
+    return df, df_master_hwc
 
-            # Nikshay ID Generation
-            df['nikshay_gen_num'] = parse_nikshay_id(col_x_series)
-            df['nikshay_pen_num'] = np.where((df['presumptive_num'] == 1) & (df['nikshay_gen_num'] == 0), 1, 0)
 
-            total_cells = df.size
-            missing_cells = df.isnull().sum().sum()
-            completeness = ((total_cells - missing_cells) / total_cells) * 100 if total_cells > 0 else 0
-            
-            sheet_quality_summaries[sheet] = {
-                'row_count': len(df),
-                'blank_rows': int(df.isnull().all(axis=1).sum()),
-                'inline_anomalies': 0,
-                'duplicate_records': int(df.duplicated().sum()),
-                'completeness_score': float(completeness),
-                'missing_by_column': df.isnull().sum().to_dict()
-            }
-            
-            all_sheets_map[sheet] = df
-            combined_records.append(df)
-            
-        if not combined_records:
-            return None, None, None
-            
-        master_df = pd.concat(combined_records, ignore_index=True)
-        master_df['clean_facility'] = master_df['facility'].apply(clean_str)
-        master_df['clean_block'] = master_df['block'].apply(clean_str)
-        master_df['clean_district'] = master_df['district'].apply(clean_str)
-        master_df['match_key_dist_blk_fac'] = master_df['clean_district'] + "_" + master_df['clean_block'] + "_" + master_df['clean_facility']
-        master_df['match_key_blk_fac'] = master_df['clean_block'] + "_" + master_df['clean_facility']
-        
-        return master_df, all_sheets_map, sheet_quality_summaries
-        
-    except Exception as e:
-        st.error(f"Screening data parsing failed: {str(e)}")
-        return None, None, None
-
-# ==========================================
-# 5. MULTI-TIER RECONCILIATION ENGINE
-# ==========================================
-def reconcile_master_and_screening(enrolled_df, working_df):
+def render_enterprise_kpi(col, label, value, subtext, icon, accent_color="#0284C7", bg_bubble="#E0F2FE"):
+    card_html = f"""
+    <div class="kpi-grid-card">
+        <div class="kpi-accent-bar" style="background-color: {accent_color};"></div>
+        <div class="kpi-top-meta">
+            <span class="kpi-label">{label}</span>
+            <div class="kpi-icon-bubble" style="background-color: {bg_bubble}; color: {accent_color};">
+                {icon}
+            </div>
+        </div>
+        <div class="kpi-metric-value">{value}</div>
+        <div class="kpi-subtext">{subtext}</div>
+    </div>
     """
-    Executes a multi-tier match between Master HWCs and Screening data:
-    1. Composite District + Block + Facility
-    2. Block + Facility
-    3. Direct Facility Match (fuzzy/token within same block)
-    Guarantees that ANY facility with Total Screening > 0 has an accurate screening timestamp!
-    """
-    def get_cho_names(s):
-        valid = [str(x).strip() for x in s if str(x).strip() not in ['', 'nan', 'Unknown', 'None']]
-        return ", ".join(sorted(list(set(valid)))) if valid else "Unknown"
+    col.markdown(card_html, unsafe_allow_html=True)
 
-    screen_summary = working_df.groupby(['district', 'block', 'facility']).agg(
-        Total_Screening=('facility', 'count'),
-        CHO_Name=('cho_name', get_cho_names),
-        Unique_CHOs=('cho_name', 'nunique'),
-        AI_Presumptive=('ai_presumptive_flag', 'sum'),
-        NTEP_Presumptive=('ntep_presumptive_flag', 'sum'),
-        Presumptive_Clinical=('presumptive_clinical', 'sum'),
-        HWC_Overruled=('hwc_overrule_flag', 'sum'),
-        Total_Presumptive=('presumptive_num', 'sum'),
-        Nikshay_ID_Created=('nikshay_gen_num', 'sum'),
-        Nikshay_ID_Pending=('nikshay_pen_num', 'sum'),
-        Earliest_Screening_Date=('screening_timestamp', 'min')
-    ).reset_index()
 
-    screen_summary['clean_facility'] = screen_summary['facility'].apply(clean_str)
-    screen_summary['clean_block'] = screen_summary['block'].apply(clean_str)
-    screen_summary['clean_district'] = screen_summary['district'].apply(clean_str)
-    screen_summary['match_key_dist_blk_fac'] = screen_summary['clean_district'] + "_" + screen_summary['clean_block'] + "_" + screen_summary['clean_facility']
-    screen_summary['match_key_blk_fac'] = screen_summary['clean_block'] + "_" + screen_summary['clean_facility']
-
-    m = enrolled_df.copy()
-    m['Total_Screening'] = 0
-    m['CHO_Name'] = "Unassigned / Pending"
-    m['Unique_CHOs'] = 0
-    m['AI_Presumptive'] = 0
-    m['NTEP_Presumptive'] = 0
-    m['Presumptive_Clinical'] = 0
-    m['HWC_Overruled'] = 0
-    m['Total_Presumptive'] = 0
-    m['Nikshay_ID_Created'] = 0
-    m['Nikshay_ID_Pending'] = 0
-    m['Earliest_Screening_Date'] = pd.NaT
-
-    matched_screening_indices = set()
-
-    # Pass 1: District + Block + Facility
-    m_dict_pass1 = screen_summary.set_index('match_key_dist_blk_fac').to_dict('index')
-    for idx, row in m.iterrows():
-        k = row['match_key_dist_blk_fac']
-        if k in m_dict_pass1:
-            data = m_dict_pass1[k]
-            m.at[idx, 'Total_Screening'] = data['Total_Screening']
-            m.at[idx, 'CHO_Name'] = data['CHO_Name']
-            m.at[idx, 'Unique_CHOs'] = data['Unique_CHOs']
-            m.at[idx, 'AI_Presumptive'] = data['AI_Presumptive']
-            m.at[idx, 'NTEP_Presumptive'] = data['NTEP_Presumptive']
-            m.at[idx, 'Presumptive_Clinical'] = data['Presumptive_Clinical']
-            m.at[idx, 'HWC_Overruled'] = data['HWC_Overruled']
-            m.at[idx, 'Total_Presumptive'] = data['Total_Presumptive']
-            m.at[idx, 'Nikshay_ID_Created'] = data['Nikshay_ID_Created']
-            m.at[idx, 'Nikshay_ID_Pending'] = data['Nikshay_ID_Pending']
-            m.at[idx, 'Earliest_Screening_Date'] = data['Earliest_Screening_Date']
-            matched_screening_indices.add(k)
-
-    # Pass 2: Block + Facility
-    unmatched_mask = m['Total_Screening'] == 0
-    remaining_screen = screen_summary[~screen_summary['match_key_dist_blk_fac'].isin(matched_screening_indices)]
-    m_dict_pass2 = remaining_screen.drop_duplicates(subset=['match_key_blk_fac']).set_index('match_key_blk_fac').to_dict('index')
-    
-    for idx in m[unmatched_mask].index:
-        k = m.at[idx, 'match_key_blk_fac']
-        if k in m_dict_pass2:
-            data = m_dict_pass2[k]
-            m.at[idx, 'Total_Screening'] = data['Total_Screening']
-            m.at[idx, 'CHO_Name'] = data['CHO_Name']
-            m.at[idx, 'Unique_CHOs'] = data['Unique_CHOs']
-            m.at[idx, 'AI_Presumptive'] = data['AI_Presumptive']
-            m.at[idx, 'NTEP_Presumptive'] = data['NTEP_Presumptive']
-            m.at[idx, 'Presumptive_Clinical'] = data['Presumptive_Clinical']
-            m.at[idx, 'HWC_Overruled'] = data['HWC_Overruled']
-            m.at[idx, 'Total_Presumptive'] = data['Total_Presumptive']
-            m.at[idx, 'Nikshay_ID_Created'] = data['Nikshay_ID_Created']
-            m.at[idx, 'Nikshay_ID_Pending'] = data['Nikshay_ID_Pending']
-            m.at[idx, 'Earliest_Screening_Date'] = data['Earliest_Screening_Date']
-            matched_screening_indices.add(data['match_key_dist_blk_fac'])
-
-    # Pass 3: Fuzzy / Substring match in same Block
-    unmatched_mask = m['Total_Screening'] == 0
-    remaining_screen = screen_summary[~screen_summary['match_key_dist_blk_fac'].isin(matched_screening_indices)]
-    
-    for idx in m[unmatched_mask].index:
-        b_clean = m.at[idx, 'clean_block']
-        f_clean = m.at[idx, 'clean_facility']
-        if not f_clean:
-            continue
-        cands = remaining_screen[remaining_screen['clean_block'] == b_clean]
-        for _, c_row in cands.iterrows():
-            cand_fac = c_row['clean_facility']
-            if f_clean in cand_fac or cand_fac in f_clean:
-                m.at[idx, 'Total_Screening'] = c_row['Total_Screening']
-                m.at[idx, 'CHO_Name'] = c_row['CHO_Name']
-                m.at[idx, 'Unique_CHOs'] = c_row['Unique_CHOs']
-                m.at[idx, 'AI_Presumptive'] = c_row['AI_Presumptive']
-                m.at[idx, 'NTEP_Presumptive'] = c_row['NTEP_Presumptive']
-                m.at[idx, 'Presumptive_Clinical'] = c_row['Presumptive_Clinical']
-                m.at[idx, 'HWC_Overruled'] = c_row['HWC_Overruled']
-                m.at[idx, 'Total_Presumptive'] = c_row['Total_Presumptive']
-                m.at[idx, 'Nikshay_ID_Created'] = c_row['Nikshay_ID_Created']
-                m.at[idx, 'Nikshay_ID_Pending'] = c_row['Nikshay_ID_Pending']
-                m.at[idx, 'Earliest_Screening_Date'] = c_row['Earliest_Screening_Date']
-                matched_screening_indices.add(c_row['match_key_dist_blk_fac'])
-                break
-
-    m['Screening_Status'] = np.where(m['Total_Screening'] > 0, 'Screened', 'Pending Screening')
-
-    fallback_dataset_min = working_df['screening_timestamp'].dropna().min()
-    default_timestamp = fallback_dataset_min if pd.notnull(fallback_dataset_min) else pd.Timestamp(datetime.datetime.now())
-
-    def format_screening_datetime(row):
-        if row['Total_Screening'] == 0:
-            return 'Not Started'
-        d = row['Earliest_Screening_Date']
-        if pd.notnull(d) and not pd.isna(d):
-            return d.strftime('%Y-%m-%d %H:%M')
-        return default_timestamp.strftime('%Y-%m-%d %H:%M')
-
-    m['Screening_Started_On'] = m.apply(format_screening_datetime, axis=1)
-
-    m['Presumptive_Rate_%'] = np.where(
-        m['Total_Screening'] > 0,
-        (m['Total_Presumptive'] / m['Total_Screening'] * 100).round(1),
-        0.0
-    )
-    m['Nikshay_Created_Rate_%'] = np.where(
-        m['Total_Presumptive'] > 0,
-        (m['Nikshay_ID_Created'] / m['Total_Presumptive'] * 100).round(1),
-        0.0
-    )
-    m['Nikshay_Pending_Rate_%'] = np.where(
-        m['Total_Presumptive'] > 0,
-        (m['Nikshay_ID_Pending'] / m['Total_Presumptive'] * 100).round(1),
-        0.0
-    )
-
-    return m
-
-def calculate_cho_tier(count, median_val):
-    if count >= median_val * 1.5: return "Excellent"
-    elif count >= median_val: return "Good"
-    elif count >= median_val * 0.5: return "Average"
-    else: return "Poor"
-
-def build_excel_report_left_aligned(data_bundle):
-    """
-    Generates downloadable Excel workbook where all data cells, numbers,
-    and column headers are left-aligned, with autofitted column widths.
-    """
-    out = BytesIO()
-    with pd.ExcelWriter(out, engine='xlsxwriter') as wr:
-        workbook = wr.book
-        
-        # Left aligned format definition for all cells
-        cell_fmt = workbook.add_format({
-            'align': 'left',
-            'valign': 'vcenter',
-            'font_name': 'Segoe UI',
-            'font_size': 10
-        })
-        
-        header_fmt = workbook.add_format({
-            'align': 'left',
-            'valign': 'vcenter',
-            'bold': True,
-            'font_name': 'Segoe UI',
-            'font_size': 11,
-            'bg_color': '#F1F5F9',
-            'font_color': '#0F172A',
-            'border': 1,
-            'border_color': '#CBD5E1'
-        })
-
-        for tab_name, dataframe in data_bundle.items():
-            sheet_title = tab_name[:31]
-            df_to_write = dataframe.copy()
-            df_to_write.to_excel(wr, sheet_name=sheet_title, index=False)
-            worksheet = wr.sheets[sheet_title]
-            
-            # Format columns with left alignment and dynamic width
-            for col_idx, col_name in enumerate(df_to_write.columns):
-                # Calculate max length of values
-                col_vals = df_to_write[col_name].astype(str)
-                max_val_len = col_vals.map(len).max() if not col_vals.empty else 0
-                max_len = max(max_val_len, len(str(col_name))) + 4
-                worksheet.set_column(col_idx, col_idx, min(max_len, 50), cell_fmt)
-                worksheet.write(0, col_idx, col_name, header_fmt)
-
-    return out.getvalue()
-
-# ==========================================
-# 6. SIDEBAR CONTROLS & UPLOADS (EXCEL & CSV)
-# ==========================================
-st.sidebar.markdown('<div class="sidebar-header-custom">📊 MIS Control Panel</div>', unsafe_allow_html=True)
-
-st.sidebar.markdown("**1. Facility Enrollment Master**")
-enrollment_file = st.sidebar.file_uploader(
-    "Upload Facility Master (HWCs)", 
-    type=["xlsx", "xls", "csv"], 
-    key="enrollment_uploader",
-    help="Accepts Excel (.xlsx, .xls) and CSV (.csv) files"
-)
-
-st.sidebar.markdown("**2. Screening Activity Data**")
-source_file = st.sidebar.file_uploader(
-    "Upload Screening Activity Records", 
-    type=["xlsx", "xls", "csv"], 
-    key="screening_uploader",
-    help="Accepts Excel (.xlsx, .xls) and CSV (.csv) files"
-)
-
-if source_file is not None:
-    master_df, sheet_dfs, quality_manifest = process_health_workbook(source_file)
-    enrolled_df = process_facility_enrollment(enrollment_file) if enrollment_file is not None else None
-    
-    if master_df is not None:
-        st.sidebar.markdown("### 🔍 Filter Scope")
-        
-        abs_min_date = master_df['reg_date'].min().to_pydatetime()
-        abs_max_date = master_df['reg_date'].max().to_pydatetime()
-        
-        start_select, end_select = st.sidebar.date_input(
-            "Reporting Timeline",
-            value=(abs_min_date, abs_max_date),
-            min_value=abs_min_date,
-            max_value=abs_max_date
-        )
-        
-        working_df = master_df[
-            (master_df['reg_date'].dt.date >= start_select) & 
-            (master_df['reg_date'].dt.date <= end_select)
-        ].copy()
-        
-        if enrolled_df is not None:
-            available_districts = sorted(list(set(working_df['district'].unique()).union(set(enrolled_df['district'].unique()))))
-        else:
-            available_districts = sorted(working_df['district'].unique())
-            
-        selected_districts = st.sidebar.multiselect("Districts Selection", options=available_districts, placeholder="All Active")
-        if selected_districts:
-            working_df = working_df[working_df['district'].isin(selected_districts)]
-            if enrolled_df is not None:
-                enrolled_df = enrolled_df[enrolled_df['district'].isin(selected_districts)]
-                
-        if enrolled_df is not None:
-            available_blocks = sorted(list(set(working_df['block'].unique()).union(set(enrolled_df['block'].unique()))))
-        else:
-            available_blocks = sorted(working_df['block'].unique())
-            
-        selected_blocks = st.sidebar.multiselect("Blocks Selection", options=available_blocks, placeholder="All Active")
-        if selected_blocks:
-            working_df = working_df[working_df['block'].isin(selected_blocks)]
-            if enrolled_df is not None:
-                enrolled_df = enrolled_df[enrolled_df['block'].isin(selected_blocks)]
-                
-        fac_opts = sorted(working_df['facility'].unique())
-        selected_facilities = st.sidebar.multiselect("Facilities Selection", options=fac_opts, placeholder="All Active")
-        if selected_facilities:
-            working_df = working_df[working_df['facility'].isin(selected_facilities)]
-            
-        cho_opts = sorted(working_df['cho_name'].unique())
-        selected_chos = st.sidebar.multiselect("CHO Personnel Selection", options=cho_opts, placeholder="All Active")
-        if selected_chos:
-            working_df = working_df[working_df['cho_name'].isin(selected_chos)]
-            
-        presumptive_filter = st.sidebar.selectbox(
-            "Filter by Clinical Status",
-            options=["All Records", "Total Presumptive", "Nikshay ID Generated", "Nikshay ID Pending", "AI Presumptive", "NTEP Presumptive", "Overruled by HWC"]
-        )
-        if presumptive_filter == "Total Presumptive":
-            working_df = working_df[working_df['presumptive_num'] == 1]
-        elif presumptive_filter == "Nikshay ID Generated":
-            working_df = working_df[working_df['nikshay_gen_num'] == 1]
-        elif presumptive_filter == "Nikshay ID Pending":
-            working_df = working_df[working_df['nikshay_pen_num'] == 1]
-        elif presumptive_filter == "AI Presumptive":
-            working_df = working_df[working_df['ai_presumptive_flag'] == 1]
-        elif presumptive_filter == "NTEP Presumptive":
-            working_df = working_df[working_df['ntep_presumptive_flag'] == 1]
-        elif presumptive_filter == "Overruled by HWC":
-            working_df = working_df[working_df['hwc_overrule_flag'] == 1]
-
-        global_search = st.sidebar.text_input("📝 Global Search Bar")
-        if global_search:
-            working_df = working_df[working_df.astype(str).apply(lambda row: row.str.contains(global_search, case=False).any(), axis=1)]
-
-        # ==========================================
-        # 7. SCREENING & ENROLLMENT SYNTHESIS
-        # ==========================================
-        if enrolled_df is not None:
-            reconciled_fac = reconcile_master_and_screening(enrolled_df, working_df)
-
-            block_recon = reconciled_fac.groupby(['district', 'block']).agg(
-                Total_HWCs=('facility', 'nunique'),
-                HWCs_Started_Screening=('Screening_Status', lambda x: (x == 'Screened').sum()),
-                HWCs_Not_Started_Screening=('Screening_Status', lambda x: (x == 'Pending Screening').sum()),
-                Total_Screening=('Total_Screening', 'sum'),
-                Total_Presumptive=('Total_Presumptive', 'sum'),
-                Nikshay_ID_Created=('Nikshay_ID_Created', 'sum'),
-                Nikshay_ID_Pending=('Nikshay_ID_Pending', 'sum'),
-                Earliest_Screening_Date=('Earliest_Screening_Date', 'min')
-            ).reset_index()
-
-            block_recon['Screening_Coverage_%'] = (block_recon['HWCs_Started_Screening'] / block_recon['Total_HWCs'] * 100).round(1)
-            block_recon['Nikshay_ID_Created_%'] = np.where(
-                block_recon['Total_Presumptive'] > 0,
-                (block_recon['Nikshay_ID_Created'] / block_recon['Total_Presumptive'] * 100).round(1),
-                0.0
-            )
-            block_recon['Nikshay_ID_Pending_%'] = np.where(
-                block_recon['Total_Presumptive'] > 0,
-                (block_recon['Nikshay_ID_Pending'] / block_recon['Total_Presumptive'] * 100).round(1),
-                0.0
-            )
-            
-            def format_block_date(row):
-                if row['HWCs_Started_Screening'] == 0:
-                    return 'Not Started'
-                d = row['Earliest_Screening_Date']
-                if pd.notnull(d) and not pd.isna(d):
-                    return d.strftime('%Y-%m-%d %H:%M')
-                fallback_d = working_df['screening_timestamp'].dropna().min()
-                return fallback_d.strftime('%Y-%m-%d %H:%M') if pd.notnull(fallback_d) else 'Not Started'
-
-            block_recon['Screening_Started_Date_Time'] = block_recon.apply(format_block_date, axis=1)
-
-            block_report = block_recon.rename(columns={
-                'district': 'District Name',
-                'block': 'Block Name',
-                'Total_HWCs': 'Total HWCs',
-                'HWCs_Started_Screening': 'HWCs Started Screening',
-                'HWCs_Not_Started_Screening': 'HWCs Not Started Screening',
-                'Screening_Coverage_%': 'Screening Coverage %',
-                'Total_Screening': 'Total Screening',
-                'Total_Presumptive': 'Total Presumptive',
-                'Nikshay_ID_Created': 'Nikshay ID Created',
-                'Nikshay_ID_Created_%': 'Nikshay ID Created %',
-                'Nikshay_ID_Pending': 'Nikshay ID Pending',
-                'Nikshay_ID_Pending_%': 'Nikshay ID Pending %',
-                'Screening_Started_Date_Time': 'Screening Started (Date & Time)'
-            })
-            
-            block_report = block_report[[
-                'District Name', 'Block Name', 'Total HWCs', 'HWCs Started Screening', 
-                'HWCs Not Started Screening', 'Screening Coverage %', 'Total Screening', 
-                'Total Presumptive', 'Nikshay ID Created', 'Nikshay ID Created %', 
-                'Nikshay ID Pending', 'Nikshay ID Pending %', 'Screening Started (Date & Time)'
-            ]].sort_values(by=['District Name', 'Total HWCs'], ascending=[True, False]).reset_index(drop=True)
-
-            # Master All-Facilities View (shows every enrolled facility)
-            all_facilities_report = reconciled_fac[[
-                'district', 'block', 'facility', 'CHO_Name', 'Total_Screening',
-                'HWC_Overruled', 'Presumptive_Clinical', 'Total_Presumptive',
-                'Nikshay_ID_Created', 'Nikshay_Created_Rate_%',
-                'Nikshay_ID_Pending', 'Nikshay_Pending_Rate_%',
-                'Screening_Started_On'
-            ]].copy()
-
-            all_facilities_report.rename(columns={
-                'district': 'District Name',
-                'block': 'Block Name',
-                'facility': 'HWCs Name',
-                'CHO_Name': 'CHO Name',
-                'Total_Screening': 'Total Screening',
-                'HWC_Overruled': 'Over ride by HWCs',
-                'Presumptive_Clinical': 'Presumptive',
-                'Total_Presumptive': 'Total Presumptive',
-                'Nikshay_ID_Created': 'Nikshay ID Generated',
-                'Nikshay_Created_Rate_%': 'Nikshay ID Generated %',
-                'Nikshay_ID_Pending': 'Pending for Nikshay ID Generation',
-                'Nikshay_Pending_Rate_%': 'Pending for Nikshay ID Generation %',
-                'Screening_Started_On': 'Screening Started (Date & Time)'
-            }, inplace=True)
-
-            tot_enrolled = len(reconciled_fac)
-            tot_screened_fac = (reconciled_fac['Screening_Status'] == 'Screened').sum()
-            tot_pending_fac = tot_enrolled - tot_screened_fac
-            global_cov_pct = (tot_screened_fac / tot_enrolled * 100) if tot_enrolled > 0 else 0
-            
-            tot_ai_pres = reconciled_fac['AI_Presumptive'].sum()
-            tot_ntep_pres = reconciled_fac['NTEP_Presumptive'].sum()
-            tot_overrule = reconciled_fac['HWC_Overruled'].sum()
-            tot_presumptive = reconciled_fac['Total_Presumptive'].sum()
-            tot_nikshay_gen = reconciled_fac['Nikshay_ID_Created'].sum()
-            tot_nikshay_pen = reconciled_fac['Nikshay_ID_Pending'].sum()
-            nikshay_rate = (tot_nikshay_gen / tot_presumptive * 100) if tot_presumptive > 0 else 0
-        else:
-            tot_enrolled = working_df['facility'].nunique()
-            tot_screened_fac = tot_enrolled
-            tot_pending_fac = 0
-            global_cov_pct = 100.0
-            tot_ai_pres = working_df['ai_presumptive_flag'].sum()
-            tot_ntep_pres = working_df['ntep_presumptive_flag'].sum()
-            tot_overrule = working_df['hwc_overrule_flag'].sum()
-            tot_presumptive = working_df['presumptive_num'].sum()
-            tot_nikshay_gen = working_df['nikshay_gen_num'].sum()
-            tot_nikshay_pen = working_df['nikshay_pen_num'].sum()
-            nikshay_rate = (tot_nikshay_gen / tot_presumptive * 100) if tot_presumptive > 0 else 0
-            block_recon = None
-            block_report = None
-            reconciled_fac = None
-            all_facilities_report = None
-
-        # ==========================================
-        # 8. CORE ROLLUPS
-        # ==========================================
-        total_scr = len(working_df)
-        dist_cnt = working_df['district'].nunique()
-        blk_cnt = working_df['block'].nunique()
-        fac_cnt = working_df['facility'].nunique()
-        cho_cnt = working_df['cho_name'].nunique()
-        
-        agg_cells = working_df.size
-        agg_nulls = working_df.isnull().sum().sum()
-        global_completeness = ((agg_cells - agg_nulls) / agg_cells) * 100 if agg_cells > 0 else 0
-        missing_percentage = 100 - global_completeness
-
-        dist_grp = working_df.groupby('district').agg(
-            Screenings_Count=('district', 'count'),
-            Assigned_CHOs=('cho_name', 'nunique'),
-            Assigned_Facilities=('facility', 'nunique'),
-            Total_Presumptive=('presumptive_num', 'sum'),
-            Nikshay_Created=('nikshay_gen_num', 'sum'),
-            Nikshay_Pending=('nikshay_pen_num', 'sum')
-        ).sort_values(by='Screenings_Count', ascending=False).reset_index()
-        dist_grp['Contribution_Share_%'] = (dist_grp['Screenings_Count'] / total_scr * 100).round(2) if total_scr > 0 else 0
-        dist_grp['Nikshay_Conversion_%'] = np.where(dist_grp['Total_Presumptive'] > 0, (dist_grp['Nikshay_Created'] / dist_grp['Total_Presumptive'] * 100).round(1), 0.0)
-
-        block_grp = working_df.groupby(['block', 'district']).agg(
-            Screenings_Count=('block', 'count'),
-            Unique_Facilities=('facility', 'nunique'),
-            AI_Presumptive=('ai_presumptive_flag', 'sum'),
-            NTEP_Presumptive=('ntep_presumptive_flag', 'sum'),
-            HWC_Overruled=('hwc_overrule_flag', 'sum'),
-            Total_Presumptive=('presumptive_num', 'sum'),
-            Nikshay_Created=('nikshay_gen_num', 'sum'),
-            Nikshay_Pending=('nikshay_pen_num', 'sum')
-        ).sort_values(by='Screenings_Count', ascending=False).reset_index()
-        block_grp['Nikshay_Conversion_%'] = np.where(block_grp['Total_Presumptive'] > 0, (block_grp['Nikshay_Created'] / block_grp['Total_Presumptive'] * 100).round(1), 0.0)
-
-        cho_raw = working_df.groupby(['cho_name', 'district', 'facility']).agg(
-            Total_Screenings=('cho_name', 'count'),
-            Total_Presumptive=('presumptive_num', 'sum'),
-            Nikshay_Created=('nikshay_gen_num', 'sum'),
-            Nikshay_Pending=('nikshay_pen_num', 'sum')
-        ).reset_index()
-        cho_raw['Nikshay_Rate_%'] = np.where(cho_raw['Total_Presumptive'] > 0, (cho_raw['Nikshay_Created'] / cho_raw['Total_Presumptive'] * 100).round(1), 0.0)
-        state_median = cho_raw['Total_Screenings'].median() if not cho_raw.empty else 0
-        cho_raw['Workforce_Tier'] = cho_raw['Total_Screenings'].apply(lambda count: calculate_cho_tier(count, state_median))
-        cho_raw = cho_raw.sort_values(by='Total_Screenings', ascending=False).reset_index(drop=True)
-
-        fac_grp = working_df.groupby(['facility', 'district', 'block']).agg(
-            Total_Screenings=('facility', 'count'),
-            Total_Presumptive=('presumptive_num', 'sum'),
-            Nikshay_Created=('nikshay_gen_num', 'sum'),
-            Nikshay_Pending=('nikshay_pen_num', 'sum'),
-            Earliest_Screening=('screening_timestamp', 'min')
-        ).reset_index().sort_values(by='Total_Screenings', ascending=False).reset_index(drop=True)
-        fac_grp['Contribution_Percentage'] = (fac_grp['Total_Screenings'] / total_scr * 100).round(2) if total_scr > 0 else 0
-        fac_grp['Nikshay_Rate_%'] = np.where(fac_grp['Total_Presumptive'] > 0, (fac_grp['Nikshay_Created'] / fac_grp['Total_Presumptive'] * 100).round(1), 0.0)
-        fac_grp['Screening_Started'] = fac_grp.apply(
-            lambda r: r['Earliest_Screening'].strftime('%Y-%m-%d %H:%M') if r['Total_Screenings'] > 0 and pd.notnull(r['Earliest_Screening']) else 'Not Started',
-            axis=1
-        )
-
-        # Tabs Layout
-        tabs = st.tabs([
-            "📊 Executive Summary",
-            "🏥 Enrollment & Coverage",
-            "📋 All Facilities Master Register",
-            "🔬 Presumptive Channels",
-            "🏢 District Breakdown",
-            "🧱 Block Performance",
-            "👩‍⚕️ CHO Tiers & Workloads",
-            "🏥 Facility Contribution",
-            "🛠️ Data Audit & Quality",
-            "🧠 Operational Insights"
-        ])
-
-        # ==========================================
-        # TAB 1: EXECUTIVE SUMMARY
-        # ==========================================
-        with tabs[0]:
-            st.markdown("### 📈 Core Key Performance Indicators (Executive Summary)")
-            st.markdown(f"""
-            <div class="kpi-container">
-                <div class="kpi-card" style="border-top-color: #2563EB;">
-                    <div class="kpi-title">Total Screenings</div>
-                    <div class="kpi-value">{total_scr:,}</div>
-                    <div class="kpi-subtext">Screening records processed</div>
-                </div>
-                <div class="kpi-card" style="border-top-color: #0284C7;">
-                    <div class="kpi-title">Total HWCs (Enrolled)</div>
-                    <div class="kpi-value">{tot_enrolled:,}</div>
-                    <div class="kpi-subtext">Master Enrolled Centers</div>
-                </div>
-                <div class="kpi-card" style="border-top-color: #10B981;">
-                    <div class="kpi-title">HWCs Started Screening</div>
-                    <div class="kpi-value">{tot_screened_fac:,}</div>
-                    <div class="kpi-subtext">{global_cov_pct:.1f}% HWC Coverage</div>
-                </div>
-                <div class="kpi-card" style="border-top-color: #EF4444;">
-                    <div class="kpi-title">HWCs Not Started Screening</div>
-                    <div class="kpi-value">{tot_pending_fac:,}</div>
-                    <div class="kpi-subtext">Zero screening activity</div>
+# ------------------------------------------------------------------------------
+# 4. MAIN APPLICATION
+# ------------------------------------------------------------------------------
+def main():
+    # --------------------------------------------------------------------------
+    # SIDEBAR: COMPACT, HIGH-VISIBILITY DESIGN
+    # --------------------------------------------------------------------------
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="sidebar-brand">
+                <span style="font-size: 1.4rem;">🩺</span>
+                <div>
+                    <div class="sidebar-brand-title">CATB Command</div>
+                    <div class="sidebar-brand-sub">Health Surveillance Portal</div>
                 </div>
             </div>
-            <div class="kpi-container">
-                <div class="kpi-card" style="border-top-color: #D97706;">
-                    <div class="kpi-title">Total Presumptive</div>
-                    <div class="kpi-value">{tot_presumptive:,}</div>
-                    <div class="kpi-subtext">{(tot_presumptive / total_scr * 100 if total_scr > 0 else 0):.1f}% Presumptive Rate</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # File Ingestion Section
+        st.markdown('<div class="sidebar-category-header">📁 1. Data Ingestion</div>', unsafe_allow_html=True)
+        
+        st.markdown('<div class="filter-item-label">Screening Data Sheet</div>', unsafe_allow_html=True)
+        up_all = st.file_uploader(
+            "Screening Data Sheet",
+            type=["xlsx", "xls", "csv"],
+            key="file_screening",
+            label_visibility="collapsed",
+        )
+
+        st.markdown('<div class="filter-item-label">HWC Master Hierarchy</div>', unsafe_allow_html=True)
+        up_hier = st.file_uploader(
+            "HWC Master Hierarchy",
+            type=["xlsx", "xls", "csv"],
+            key="file_hierarchy",
+            label_visibility="collapsed",
+        )
+
+    if not up_all:
+        st.markdown(
+            """
+            <div class="app-header">
+                <div>
+                    <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
+                    <div class="app-header-subtitle">Active Case Finding (ACF) Intelligence, AI Triage & Nikshay Continuum of Care</div>
                 </div>
-                <div class="kpi-card" style="border-top-color: #059669;">
-                    <div class="kpi-title">Nikshay ID Created</div>
-                    <div class="kpi-value">{tot_nikshay_gen:,}</div>
-                    <div class="kpi-subtext">{nikshay_rate:.1f}% Created against Presumptive</div>
-                </div>
-                <div class="kpi-card" style="border-top-color: #DC2626;">
-                    <div class="kpi-title">Nikshay ID Pending</div>
-                    <div class="kpi-value">{tot_nikshay_pen:,}</div>
-                    <div class="kpi-subtext">{(100 - nikshay_rate):.1f}% Pending Generation</div>
-                </div>
-                <div class="kpi-card" style="border-top-color: #6366F1;">
-                    <div class="kpi-title">Overruled by HWC</div>
-                    <div class="kpi-value">{tot_overrule:,}</div>
-                    <div class="kpi-subtext">{(tot_overrule / tot_presumptive * 100 if tot_presumptive > 0 else 0):.1f}% of Presumptive</div>
+                <div class="system-status-pill">
+                    <div class="pulse-dot"></div> Awaiting Ingestion
                 </div>
             </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("---")
-            st.markdown("### 🕒 Daily Volumetric Longitudinal Screening Trend Profile")
-            time_series = working_df.groupby(working_df['reg_date'].dt.date).size().reset_index(name='Volume')
-            fig_time = px.area(time_series, x='reg_date', y='Volume', title="Longitudinal Screening Volume Trend",
-                               labels={'reg_date': 'Timeline Window', 'Volume': 'Evaluated Cases'}, color_discrete_sequence=['#1E3A8A'])
-            fig_time.update_layout(plot_bgcolor='white', hovermode='x unified')
-            st.plotly_chart(fig_time, use_container_width=True)
+            """,
+            unsafe_allow_html=True,
+        )
+        st.info("👈 Please upload your **Screening Data Sheet (.xlsx, .xls, or .csv)** in the sidebar to load the surveillance portal.")
+        return
 
-        # ==========================================
-        # TAB 2: ENROLLMENT & COVERAGE
-        # ==========================================
-        with tabs[1]:
-            st.markdown("### 🏥 Facility Enrollment, Screening Initiation & Nikshay Analytics")
-            
-            if enrolled_df is None:
-                st.warning("⚠️ **Facility Master File Not Uploaded**: Please upload the Facility Enrollment Master file in the sidebar to activate comprehensive block-wise coverage tracking.")
-            else:
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Total HWCs", f"{tot_enrolled:,}")
-                c2.metric("HWCs Started Screening", f"{tot_screened_fac:,}", delta=f"{global_cov_pct:.1f}% Active")
-                c3.metric("HWCs Not Started Screening", f"{tot_pending_fac:,}", delta=f"-{tot_pending_fac}", delta_color="inverse")
-                c4.metric("Nikshay ID Created %", f"{nikshay_rate:.1f}%", delta=f"{tot_nikshay_gen} of {tot_presumptive}")
+    # Ingest Datasets
+    with st.spinner("⚡ Processing Screening Data Sheet & correlating HWC hierarchy..."):
+        df_screening, df_master_hwc = load_and_standardize_data(
+            up_all.getvalue(),
+            up_all.name,
+            up_hier.getvalue() if up_hier else None,
+            up_hier.name if up_hier else None,
+        )
 
-                st.markdown("---")
-                st.markdown("#### 🧱 Block-Wise Facility Screening Coverage & Nikshay Status")
-                
-                st.dataframe(
-                    block_report,
-                    use_container_width=True,
-                    column_config={
-                        "Screening Coverage %": st.column_config.ProgressColumn(
-                            "Screening Coverage %",
-                            help="Percent of enrolled HWCs that have initiated screening",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        ),
-                        "Nikshay ID Created %": st.column_config.ProgressColumn(
-                            "Nikshay ID Created %",
-                            help="Percentage of presumptive cases with Nikshay ID generated",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        ),
-                        "Nikshay ID Pending %": st.column_config.ProgressColumn(
-                            "Nikshay ID Pending %",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        ),
-                        "Screening Started (Date & Time)": st.column_config.TextColumn(
-                            "Screening Started (Date & Time)",
-                            help="Earliest screening activity timestamp recorded"
-                        )
-                    }
-                )
+    # --------------------------------------------------------------------------
+    # SIDEBAR: ENHANCED & COMPACT FILTERS
+    # --------------------------------------------------------------------------
+    with st.sidebar:
+        st.markdown('<div class="sidebar-category-header">🔍 2. Analytical Filters</div>', unsafe_allow_html=True)
 
-                st.markdown("---")
-                col_c1, col_c2 = st.columns(2)
-                with col_c1:
-                    fig_status = px.pie(
-                        reconciled_fac, 
-                        names='Screening_Status', 
-                        title="HWCs Screening Status Breakdown",
-                        color='Screening_Status',
-                        color_discrete_map={'Screened': '#10B981', 'Pending Screening': '#EF4444'},
-                        hole=0.45
-                    )
-                    st.plotly_chart(fig_status, use_container_width=True)
-                with col_c2:
-                    fig_nik = go.Figure(data=[
-                        go.Bar(name='Nikshay ID Created', x=block_report['Block Name'], y=block_report['Nikshay ID Created'], marker_color='#10B981'),
-                        go.Bar(name='Nikshay ID Pending', x=block_report['Block Name'], y=block_report['Nikshay ID Pending'], marker_color='#EF4444')
-                    ])
-                    fig_nik.update_layout(barmode='stack', title="Nikshay ID Generation Status by Block", plot_bgcolor='white')
-                    st.plotly_chart(fig_nik, use_container_width=True)
-
-        # ==========================================
-        # TAB 3: ALL FACILITIES MASTER REGISTER
-        # ==========================================
-        with tabs[2]:
-            st.markdown("### 📋 Complete Facility-Wise Master Status Directory")
-            st.caption("Displays every enrolled facility. Active facilities show real-time screening counts, CHO name, and initiation timestamps; pending facilities show 0 metrics and 'Not Started'.")
-            
-            if enrolled_df is None:
-                st.warning("⚠️ Please upload the Facility Enrollment Master file in the sidebar to populate this complete directory.")
-            else:
-                filter_c1, filter_c2 = st.columns([1, 2])
-                with filter_c1:
-                    fac_status_filter = st.selectbox(
-                        "Filter by Facility Status:",
-                        options=["All Facilities", "Started Screening Only", "Not Started Screening Only"]
-                    )
-                
-                df_fac_view = all_facilities_report.copy()
-                if fac_status_filter == "Started Screening Only":
-                    df_fac_view = df_fac_view[df_fac_view['Total Screening'] > 0]
-                elif fac_status_filter == "Not Started Screening Only":
-                    df_fac_view = df_fac_view[df_fac_view['Total Screening'] == 0]
-
-                st.dataframe(
-                    df_fac_view,
-                    use_container_width=True,
-                    column_config={
-                        "Screening Started (Date & Time)": st.column_config.TextColumn("Screening Started (Date & Time)"),
-                        "Nikshay ID Generated %": st.column_config.ProgressColumn(
-                            "Nikshay ID Generated %",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        ),
-                        "Pending for Nikshay ID Generation %": st.column_config.ProgressColumn(
-                            "Pending for Nikshay %",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        )
-                    }
-                )
-
-        # ==========================================
-        # TAB 4: PRESUMPTIVE CHANNELS
-        # ==========================================
-        with tabs[3]:
-            st.markdown("### 🔬 Multi-Channel Presumptive Identification Analysis")
-            st.info("💡 **Presumptive Pathways**: A case is marked **Presumptive** if flagged by **AI Presumptive**, confirmed by **NTEP Presumptive**, or **Overruled by HWC (CHO)**.")
-            
-            p_c1, p_c2, p_c3, p_c4 = st.columns(4)
-            p_c1.metric("Total Presumptive", f"{tot_presumptive:,}", delta="Unified Pathways")
-            p_c2.metric("AI Presumptive", f"{tot_ai_pres:,}", delta=f"{(tot_ai_pres / tot_presumptive * 100 if tot_presumptive > 0 else 0):.1f}% of Presumptive")
-            p_c3.metric("NTEP Presumptive", f"{tot_ntep_pres:,}", delta=f"{(tot_ntep_pres / tot_presumptive * 100 if tot_presumptive > 0 else 0):.1f}% of Presumptive")
-            p_c4.metric("Overruled by HWC", f"{tot_overrule:,}", delta=f"{(tot_overrule / tot_presumptive * 100 if tot_presumptive > 0 else 0):.1f}% of Presumptive")
-            
-            st.markdown("---")
-            col_ch_b1, col_ch_b2 = st.columns([3, 2])
-            with col_ch_b1:
-                ch_df = block_grp[['block', 'district', 'AI_Presumptive', 'NTEP_Presumptive', 'HWC_Overruled', 'Total_Presumptive']].head(20)
-                fig_channels = go.Figure(data=[
-                    go.Bar(name='AI Presumptive', x=ch_df['block'], y=ch_df['AI_Presumptive'], marker_color='#3B82F6'),
-                    go.Bar(name='NTEP Presumptive', x=ch_df['block'], y=ch_df['NTEP_Presumptive'], marker_color='#10B981'),
-                    go.Bar(name='Overruled by HWC', x=ch_df['block'], y=ch_df['HWC_Overruled'], marker_color='#F59E0B')
-                ])
-                fig_channels.update_layout(barmode='group', title="Presumptive Identification Channels by Top Blocks", plot_bgcolor='white')
-                st.plotly_chart(fig_channels, use_container_width=True)
-            with col_ch_b2:
-                pie_data = pd.DataFrame({
-                    'Channel': ['AI Presumptive', 'NTEP Presumptive', 'Overruled by HWC'],
-                    'Cases': [tot_ai_pres, tot_ntep_pres, tot_overrule]
-                })
-                fig_pie_ch = px.pie(pie_data, names='Channel', values='Cases', title="Presumptive Detection Channel Breakdown",
-                                    color_discrete_sequence=['#3B82F6', '#10B981', '#F59E0B'], hole=0.4)
-                st.plotly_chart(fig_pie_ch, use_container_width=True)
-
-        # ==========================================
-        # TAB 5: DISTRICT BREAKDOWN
-        # ==========================================
-        with tabs[4]:
-            st.markdown("### 🏢 Regional District Standings and Metric Contributions")
-            col_d1, col_d2 = st.columns([3, 2])
+        # A. Date Filter (Compact Side-by-Side Boxes with Prominent Labels)
+        dates_valid = df_screening["reg_date_clean"].dropna()
+        if not dates_valid.empty:
+            min_avail, max_avail = dates_valid.min().date(), dates_valid.max().date()
+            col_d1, col_d2 = st.columns(2)
             with col_d1:
-                st.dataframe(
-                    dist_grp, 
-                    use_container_width=True,
-                    column_config={
-                        "Screenings_Count": st.column_config.ProgressColumn(
-                            "Screenings Count",
-                            format="%d",
-                            min_value=0,
-                            max_value=int(dist_grp["Screenings_Count"].max() if not dist_grp.empty else 100)
-                        ),
-                        "Nikshay_Conversion_%": st.column_config.ProgressColumn(
-                            "Nikshay Created %",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        )
-                    }
-                )
+                st.markdown('<div class="filter-item-label">Starting Date</div>', unsafe_allow_html=True)
+                start_date = st.date_input("Starting Date", value=min_avail, min_value=min_avail, max_value=max_avail, label_visibility="collapsed")
             with col_d2:
-                fig_dist = px.bar(dist_grp, x='district', y='Screenings_Count', title="District Output Volumes",
-                                  labels={'district': 'District Name', 'Screenings_Count': 'Screening Counts'},
-                                  color='Screenings_Count', color_continuous_scale=px.colors.sequential.Cividis)
-                st.plotly_chart(fig_dist, use_container_width=True)
+                st.markdown('<div class="filter-item-label">Ending Date</div>', unsafe_allow_html=True)
+                end_date = st.date_input("Ending Date", value=max_avail, min_value=min_avail, max_value=max_avail, label_visibility="collapsed")
+        else:
+            start_date, end_date = None, None
 
-        # ==========================================
-        # TAB 6: BLOCK PERFORMANCE
-        # ==========================================
-        with tabs[5]:
-            st.markdown("### 🧱 Block-Level Operations Performance Summary")
-            col_b1, col_b2 = st.columns([2, 3])
-            with col_b1:
-                st.dataframe(block_grp, use_container_width=True)
-            with col_b2:
-                fig_blk = px.treemap(block_grp.head(30), path=['district', 'block'], values='Screenings_Count',
-                                     title="Top 30 Block Production Volumes Treemap Matrix")
-                st.plotly_chart(fig_blk, use_container_width=True)
+        # Build Geography Reference from Master or Screening
+        geo_ref = df_master_hwc if df_master_hwc is not None else df_screening
 
-        # ==========================================
-        # TAB 7: CHO TIERS & WORKLOADS
-        # ==========================================
-        with tabs[6]:
-            st.markdown("### 👩‍⚕️ Community Health Officer (CHO) Performance Matrix")
-            col_ch1, col_ch2 = st.columns(2)
-            with col_ch1:
-                st.markdown("🏆 **Top 10 High Performing CHOs**")
-                st.dataframe(cho_raw.head(10), use_container_width=True)
-                st.markdown("📉 **Bottom 10 Lowest Performing CHOs**")
-                st.dataframe(cho_raw.tail(10), use_container_width=True)
-            with col_ch2:
-                fig_cho_pie = px.pie(
-                    cho_raw, names='Workforce_Tier', title="Workforce Segmentation Analytics Breakdown",
-                    color='Workforce_Tier',
-                    color_discrete_map={'Excellent': '#22C55E', 'Good': '#3B82F6', 'Average': '#F59E0B', 'Poor': '#EF4444'},
-                    hole=0.4
-                )
-                st.plotly_chart(fig_cho_pie, use_container_width=True)
-
-        # ==========================================
-        # TAB 8: FACILITY CONTRIBUTION
-        # ==========================================
-        with tabs[7]:
-            st.markdown("### 🏥 Health Sub-Center (HWC) Yield Trackers")
-            col_f1, col_f2 = st.columns([4, 3])
-            with col_f1:
-                st.dataframe(fac_grp, use_container_width=True)
-            with col_f2:
-                fig_fac = px.pie(fac_grp.head(15), values='Total_Screenings', names='facility', title="Yield Allocation of Top 15 Primary Centers", hole=0.4)
-                st.plotly_chart(fig_fac, use_container_width=True)
-
-        # ==========================================
-        # TAB 9: DATA AUDIT & QUALITY
-        # ==========================================
-        with tabs[8]:
-            st.markdown("### 🛠️ Structural Integrity and Audit Reports by Worksheet")
-            for sheet_name, stats in quality_manifest.items():
-                with st.expander(f"📋 Sheet Log Audit Diagnostics: {sheet_name}", expanded=True):
-                    q_c1, q_c2, q_c3, q_c4 = st.columns(4)
-                    q_c1.metric("Rows Scanned", f"{stats['row_count']:,}")
-                    q_c2.metric("Isolated Blank Rows", stats['blank_rows'])
-                    q_c3.metric("Inline Entry Dropouts", stats['inline_anomalies'])
-                    q_c4.metric("Absolute Duplicate Rows", stats['duplicate_records'])
-            
-            st.markdown("---")
-            st.markdown("### 🔍 Missing Fields Grid Heatmap Profile (500 Row Sample Matrix)")
-            sample_size = min(len(working_df), 500)
-            if sample_size > 0:
-                heat_matrix = working_df.isnull().astype(int).sample(sample_size).values
-                fig_hm = px.imshow(heat_matrix, aspect='auto', color_continuous_scale=['#E2E8F0', '#EF4444'],
-                                   labels=dict(x="Attribute Axis", y="Sample Log Index"))
-                fig_hm.update_layout(coloraxis_showscale=False)
-                st.plotly_chart(fig_hm, use_container_width=True)
-
-        # ==========================================
-        # TAB 10: OPERATIONAL INSIGHTS
-        # ==========================================
-        with tabs[9]:
-            st.markdown("### 🧠 Automated Health Infrastructure Diagnostics Engine")
-            mean_dist_val = dist_grp['Screenings_Count'].mean() if not dist_grp.empty else 0
-            
-            ins_col, rec_col = st.columns(2)
-            with ins_col:
-                st.markdown("#### 🏢 Identified Operational Bottlenecks")
-                if block_report is not None:
-                    low_cov_blocks = block_report[block_report['Screening Coverage %'] < 50.0]
-                    if not low_cov_blocks.empty:
-                        for _, row in low_cov_blocks.head(5).iterrows():
-                            st.warning(f"🚩 **Low Facility Coverage**: Block **{row['Block Name']}** ({row['District Name']}) has activated only **{row['HWCs Started Screening']} of {row['Total HWCs']} facilities** ({row['Screening Coverage %']:.1f}%).")
-                    
-                    pending_nik = block_report[block_report['Nikshay ID Pending'] > 0]
-                    if not pending_nik.empty:
-                        worst_nik = pending_nik.sort_values(by='Nikshay ID Pending', ascending=False).iloc[0]
-                        st.error(f"⚠️ **Nikshay Creation Backlog**: Block **{worst_nik['Block Name']}** has **{worst_nik['Nikshay ID Pending']} presumptive cases** awaiting Nikshay ID generation.")
-
-                for idx, r in dist_grp.iterrows():
-                    if r['Screenings_Count'] < (mean_dist_val * 0.4):
-                        st.error(f"⚠️ **Underperforming Region:** District **{r['district']}** is operating below 40% of the state output mean, with a total yield of **{r['Screenings_Count']} cases**.")
-
-            with rec_col:
-                st.markdown("#### 🛠️ Direct Strategic Action Items")
-                st.info("👉 **Clear Nikshay ID Backlog:** Ensure block coordinators enter generated Nikshay IDs for all presumptive cases.")
-                st.info("👉 **Verify HWC Overrules:** Review facilities with high CHO overrule ratios to confirm clinical alignment.")
-                st.info("👉 **Activate Pending Facilities:** Deploy mobile health teams to centers labeled 'Pending Screening' with 'Not Started' status.")
-
-        # ==========================================
-        # 9. CENTRAL EXPORT CONTROLS (EXCEL FORMAT WITH LEFT ALIGNMENT)
-        # ==========================================
-        st.sidebar.markdown("---")
-        st.sidebar.markdown("### 📥 Reports Generation")
-        
-        sheet_wise_audit_list = []
-        for sh_name, stats in quality_manifest.items():
-            sheet_wise_audit_list.append({
-                "Sheet Name": sh_name,
-                "Total Rows": stats['row_count'],
-                "Blank Rows": stats['blank_rows'],
-                "Inline Sequential Anomalies": stats['inline_anomalies'],
-                "Duplicate Log Rows": stats['duplicate_records'],
-                "Completeness Score %": stats['completeness_score']
-            })
-        df_sheet_audit_report = pd.DataFrame(sheet_wise_audit_list)
-
-        column_wise_nulls = pd.DataFrame(
-            list(working_df.isnull().sum().items()),
-            columns=['Data Field Attribute', 'Total Null Fields Collected']
-        ).sort_values(by='Total Null Fields Collected', ascending=False)
-
-        management_insights_summary = pd.DataFrame([
-            {"Metric Indicator Summary": "Total HWCs (Enrolled)", "Value Metric": str(tot_enrolled)},
-            {"Metric Indicator Summary": "HWCs Started Screening", "Value Metric": str(tot_screened_fac)},
-            {"Metric Indicator Summary": "HWCs Not Started Screening", "Value Metric": str(tot_pending_fac)},
-            {"Metric Indicator Summary": "Overall Screening Coverage %", "Value Metric": f"{global_cov_pct:.1f}%"},
-            {"Metric Indicator Summary": "Total Presumptive", "Value Metric": str(tot_presumptive)},
-            {"Metric Indicator Summary": "Nikshay ID Created", "Value Metric": str(tot_nikshay_gen)},
-            {"Metric Indicator Summary": "Nikshay ID Created %", "Value Metric": f"{nikshay_rate:.1f}%"},
-            {"Metric Indicator Summary": "Nikshay ID Pending", "Value Metric": str(tot_nikshay_pen)},
-            {"Metric Indicator Summary": "Nikshay ID Pending %", "Value Metric": f"{(100 - nikshay_rate):.1f}%"}
-        ])
-
-        bundle = {
-            "Executive_KPI_Summary": pd.DataFrame([{
-                "Total Screenings": total_scr, "Total HWCs": tot_enrolled, "HWCs Started Screening": tot_screened_fac,
-                "HWCs Not Started Screening": tot_pending_fac, "Screening Coverage %": f"{global_cov_pct:.1f}%",
-                "Total Presumptive": tot_presumptive, "Nikshay ID Created": tot_nikshay_gen,
-                "Nikshay ID Created %": f"{nikshay_rate:.1f}%", "Nikshay ID Pending": tot_nikshay_pen,
-                "Nikshay ID Pending %": f"{(100 - nikshay_rate):.1f}%"
-            }]),
-            "District_Performance_Matrix": dist_grp,
-            "Local_Block_Performance_Rank": block_grp,
-            "CHO_Workforce_Tiers": cho_raw,
-            "Primary_Facility_Outputs": fac_grp,
-            "Spreadsheet_Layer_Audits": df_sheet_audit_report,
-            "Field_Missingness_Audits": column_wise_nulls,
-            "Strategic_System_Insights": management_insights_summary
-        }
-        
-        if block_report is not None:
-            bundle["Block_Screening_Coverage"] = block_report
-        if all_facilities_report is not None:
-            bundle["All_Facilities_Detailed_Master"] = all_facilities_report
-        
-        # Build Excel report where all columns and data are left-aligned
-        excel_bytes = build_excel_report_left_aligned(bundle)
-        st.sidebar.download_button(
-            label="📊 Download Full MIS Package (Excel)",
-            data=excel_bytes,
-            file_name=f"CATB_Screening_Coverage_Report_{datetime.date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+        # B. District Filter
+        st.markdown('<div class="filter-item-label">Select District</div>', unsafe_allow_html=True)
+        avail_districts = sorted([d for d in geo_ref["District_Clean"].unique() if d != "Unknown"])
+        sel_districts = st.multiselect(
+            "Select District",
+            options=avail_districts,
+            default=[],
+            placeholder="All Districts",
+            label_visibility="collapsed",
         )
-else:
-    st.info("💡 Ingestion Queue Ready: Please upload your **Facility Enrollment Master file** and **Screening Activity data file** (Excel or CSV) in the sidebar to generate the comprehensive analytics portal.")
+
+        # Cascading Block Filter
+        geo_b = geo_ref[geo_ref["District_Clean"].isin(sel_districts)] if sel_districts else geo_ref
+        avail_blocks = sorted([b for b in geo_b["Block_Clean"].unique() if b != "Unknown"])
+        st.markdown('<div class="filter-item-label">Select Block</div>', unsafe_allow_html=True)
+        sel_blocks = st.multiselect(
+            "Select Block",
+            options=avail_blocks,
+            default=[],
+            placeholder="All Blocks",
+            label_visibility="collapsed",
+        )
+
+        # Cascading HWC Filter
+        geo_h = geo_b[geo_b["Block_Clean"].isin(sel_blocks)] if sel_blocks else geo_b
+        avail_hwcs = sorted([h for h in geo_h["Facility_Clean"].unique() if h != "Unknown"])
+        st.markdown('<div class="filter-item-label">Select HWC</div>', unsafe_allow_html=True)
+        sel_hwcs = st.multiselect(
+            "Select HWC",
+            options=avail_hwcs,
+            default=[],
+            placeholder="All HWCs",
+            label_visibility="collapsed",
+        )
+
+        # Cascading CHO Filter (From Column G of Screening records)
+        df_cho_scope = df_screening[df_screening["Facility_Clean"].isin(sel_hwcs)] if sel_hwcs else df_screening
+        avail_chos = sorted([c for c in df_cho_scope["CHO_Clean"].unique() if c not in ["Not Available", "Unknown"]])
+        st.markdown('<div class="filter-item-label">Select CHO</div>', unsafe_allow_html=True)
+        sel_chos = st.multiselect(
+            "Select CHO",
+            options=avail_chos,
+            default=[],
+            placeholder="All CHOs",
+            label_visibility="collapsed",
+        )
+
+        # Compact Reset Button
+        st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Reset All Filters", use_container_width=True):
+            st.rerun()
+
+    # --------------------------------------------------------------------------
+    # APPLY DATE & GEOGRAPHY FILTERS TO WORKING DATASET
+    # --------------------------------------------------------------------------
+    f_screen = df_screening.copy()
+    if start_date and end_date:
+        f_screen = f_screen[(f_screen["reg_date_clean"].dt.date >= start_date) & (f_screen["reg_date_clean"].dt.date <= end_date)]
+    if sel_districts:
+        f_screen = f_screen[f_screen["District_Clean"].isin(sel_districts)]
+    if sel_blocks:
+        f_screen = f_screen[f_screen["Block_Clean"].isin(sel_blocks)]
+    if sel_hwcs:
+        f_screen = f_screen[f_screen["Facility_Clean"].isin(sel_hwcs)]
+    if sel_chos:
+        f_screen = f_screen[f_screen["CHO_Clean"].isin(sel_chos)]
+
+    # --------------------------------------------------------------------------
+    # ACCURATE FACILITY-LEVEL AGGREGATION
+    # --------------------------------------------------------------------------
+    # 1. Base HWC Directory (Master List if available, otherwise Screening List)
+    if df_master_hwc is not None:
+        base_hwc = df_master_hwc.copy()
+        if sel_districts:
+            base_hwc = base_hwc[base_hwc["District_Clean"].isin(sel_districts)]
+        if sel_blocks:
+            base_hwc = base_hwc[base_hwc["Block_Clean"].isin(sel_blocks)]
+        if sel_hwcs:
+            base_hwc = base_hwc[base_hwc["Facility_Clean"].isin(sel_hwcs)]
+    else:
+        base_hwc = df_screening[["District_Clean", "Block_Clean", "Facility_Clean"]].drop_duplicates(subset=["Facility_Clean"])
+        if sel_districts:
+            base_hwc = base_hwc[base_hwc["District_Clean"].isin(sel_districts)]
+        if sel_blocks:
+            base_hwc = base_hwc[base_hwc["Block_Clean"].isin(sel_blocks)]
+        if sel_hwcs:
+            base_hwc = base_hwc[base_hwc["Facility_Clean"].isin(sel_hwcs)]
+
+    # 2. Map CHO Name strictly from Column G of Screening Data
+    cho_mapping = (
+        f_screen[f_screen["CHO_Clean"] != "Not Available"]
+        .groupby("Facility_Clean")["CHO_Clean"]
+        .agg(lambda s: s.value_counts().index[0] if len(s) > 0 else "Not Available")
+        .reset_index()
+        .rename(columns={"CHO_Clean": "Active_CHO_Name"})
+    )
+
+    # 3. Aggregate Metrics from Screening Data Sheet
+    screen_summary = (
+        f_screen.groupby("Facility_Clean")
+        .agg(
+            Total_Screening=("Facility_Clean", "count"),
+            AI_Presumptive=("is_ai_pres", "sum"),
+            NTEP_Presumptive=("is_ntep_pres", "sum"),
+            CHO_Override=("is_cho_override", "sum"),
+            Total_Presumptive=("is_total_presumptive", "sum"),
+            Presumptive_Open=("is_presumptive_open", "sum"),
+            Presumptive_Closed=("is_presumptive_closed", "sum"),
+            Total_Tested=("is_tested", "sum"),
+            Total_Diagnosed=("is_diagnosed", "sum"),
+            District_Screen=("District_Clean", "first"),
+            Block_Screen=("Block_Clean", "first"),
+        )
+        .reset_index()
+    )
+
+    # 4. Merge Base Directory with Metrics
+    hwc_matrix = pd.merge(base_hwc, screen_summary, on="Facility_Clean", how="left")
+    hwc_matrix = pd.merge(hwc_matrix, cho_mapping, on="Facility_Clean", how="left")
+
+    hwc_matrix["Total_Screening"] = hwc_matrix["Total_Screening"].fillna(0).astype(int)
+    hwc_matrix["AI_Presumptive"] = hwc_matrix["AI_Presumptive"].fillna(0).astype(int)
+    hwc_matrix["NTEP_Presumptive"] = hwc_matrix["NTEP_Presumptive"].fillna(0).astype(int)
+    hwc_matrix["CHO_Override"] = hwc_matrix["CHO_Override"].fillna(0).astype(int)
+    hwc_matrix["Total_Presumptive"] = hwc_matrix["Total_Presumptive"].fillna(0).astype(int)
+    hwc_matrix["Presumptive_Open"] = hwc_matrix["Presumptive_Open"].fillna(0).astype(int)
+    hwc_matrix["Presumptive_Closed"] = hwc_matrix["Presumptive_Closed"].fillna(0).astype(int)
+    hwc_matrix["Total_Tested"] = hwc_matrix["Total_Tested"].fillna(0).astype(int)
+    hwc_matrix["Total_Diagnosed"] = hwc_matrix["Total_Diagnosed"].fillna(0).astype(int)
+
+    hwc_matrix["District_Name"] = hwc_matrix["District_Clean"]
+    hwc_matrix["Block_Name"] = hwc_matrix["Block_Clean"]
+    hwc_matrix["HWC_Name"] = hwc_matrix["Facility_Clean"]
+
+    hwc_matrix["CHO_Name"] = hwc_matrix["Active_CHO_Name"].fillna("Not Available")
+    hwc_matrix.loc[hwc_matrix["Total_Screening"] == 0, "CHO_Name"] = "Not Available"
+
+    hwc_matrix["Screening_Status"] = np.where(hwc_matrix["Total_Screening"] > 0, "Screening Started", "Screening Not Started")
+
+    if sel_chos:
+        hwc_matrix = hwc_matrix[hwc_matrix["CHO_Name"].isin(sel_chos)]
+
+    # --------------------------------------------------------------------------
+    # DASHBOARD KPI CARD AGGREGATES
+    # --------------------------------------------------------------------------
+    total_hwcs = len(hwc_matrix)
+    screening_started_hwcs = int((hwc_matrix["Screening_Status"] == "Screening Started").sum())
+    screening_not_started_hwcs = int((hwc_matrix["Screening_Status"] == "Screening Not Started").sum())
+
+    total_screenings = int(hwc_matrix["Total_Screening"].sum())
+    total_ai_pres = int(hwc_matrix["AI_Presumptive"].sum())
+    total_ntep_pres = int(hwc_matrix["NTEP_Presumptive"].sum())
+    total_cho_override = int(hwc_matrix["CHO_Override"].sum())
+    total_presumptive = int(hwc_matrix["Total_Presumptive"].sum())
+
+    total_presumptive_open = int(hwc_matrix["Presumptive_Open"].sum())
+    total_presumptive_closed = int(hwc_matrix["Presumptive_Closed"].sum())
+    total_tested = int(hwc_matrix["Total_Tested"].sum())
+    total_diagnosed = int(hwc_matrix["Total_Diagnosed"].sum())
+
+    # Rates
+    pres_yield = (total_presumptive / max(total_screenings, 1)) * 100
+    testing_rate = (total_tested / max(total_presumptive, 1)) * 100
+    diagnosis_yield = (total_diagnosed / max(total_tested, 1)) * 100 if total_tested > 0 else 0.0
+
+    # --------------------------------------------------------------------------
+    # TOP HEADER BANNER
+    # --------------------------------------------------------------------------
+    current_time_str = datetime.datetime.now().strftime("%d %b %Y | %H:%M:%S")
+    st.markdown(
+        f"""
+        <div class="app-header">
+            <div>
+                <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
+                <div class="app-header-subtitle">
+                    Coverage: <b>{f"{len(sel_districts)} Districts Selected" if sel_districts else "All Monitored Districts"}</b> &nbsp;|&nbsp; 
+                    Period: <b>{start_date} to {end_date}</b> &nbsp;|&nbsp; 
+                    Source: <b>Screening Data Sheet (Column L, Q, T & BA Integrated)</b> &nbsp;|&nbsp; 
+                    Last Sync: <b>{current_time_str}</b>
+                </div>
+            </div>
+            <div class="system-status-pill">
+                <div class="pulse-dot"></div> Live Surveillance Active
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # --------------------------------------------------------------------------
+    # DASHBOARD KPI CARDS SECTION (3 THEMATIC CATEGORIES)
+    # --------------------------------------------------------------------------
+    st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🏛️</span> 1. Screening Overview</div></div>', unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    render_enterprise_kpi(c1, "Total HWCs", f"{total_hwcs:,}", f"Active: {screening_started_hwcs:,} | Inactive: {screening_not_started_hwcs:,}", "🏥", "#0284C7", "#E0F2FE")
+    render_enterprise_kpi(c2, "Screening Started", f"{screening_started_hwcs:,}", f"{(screening_started_hwcs/max(total_hwcs,1)*100):.1f}% operational facilities", "✅", "#16A34A", "#DCFCE7")
+    render_enterprise_kpi(c3, "Screening Not Started", f"{screening_not_started_hwcs:,}", f"{(screening_not_started_hwcs/max(total_hwcs,1)*100):.1f}% inactive facilities", "⏳", "#DC2626", "#FEE2E2")
+    render_enterprise_kpi(c4, "Total Screening", f"{total_screenings:,}", "Evaluated individuals", "📋", "#0D9488", "#CCFBF1")
+
+    st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🔬</span> 2. Presumptive Classification Breakdown</div></div>', unsafe_allow_html=True)
+    c5, c6, c7, c8 = st.columns(4)
+    render_enterprise_kpi(c5, "AI Preference Presumptive", f"{total_ai_pres:,}", "Identified by AI algorithm (Col L)", "🤖", "#8B5CF6", "#F3E8FF")
+    render_enterprise_kpi(c6, "NTEP Presumptive", f"{total_ntep_pres:,}", "Standard symptom protocol (Col Q)", "📋", "#D97706", "#FEF3C7")
+    render_enterprise_kpi(c7, "CHO Override Presumptive", f"{total_cho_override:,}", "Frontline clinical override (Col BA)", "👩‍⚕️", "#EC4899", "#FCE7F3")
+    render_enterprise_kpi(c8, "Total Unique Presumptive", f"{total_presumptive:,}", f"Deduplicated Yield: {pres_yield:.1f}% of screened", "⚠️", "#EF4444", "#FEE2E2")
+
+    st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>📈</span> 3. TB Case Progression & Clinical Outcomes</div></div>', unsafe_allow_html=True)
+    c9, c10, c11, c12 = st.columns(4)
+    render_enterprise_kpi(c9, "Presumptive Open", f"{total_presumptive_open:,}", "PRESUMPTIVE_OPEN (Nikshay Created)", "🆔", "#2563EB", "#DBEAFE")
+    render_enterprise_kpi(c10, "Presumptive Closed", f"{total_presumptive_closed:,}", "PRESUMPTIVE_CLOSED (Negative/Completed)", "🔒", "#475569", "#F1F5F9")
+    render_enterprise_kpi(c11, "Total Tested", f"{total_tested:,}", f"Closed ({total_presumptive_closed}) + Diagnosed ({total_diagnosed})", "🧪", "#7C3AED", "#EDE9FE")
+    render_enterprise_kpi(c12, "Total Diagnosed", f"{total_diagnosed:,}", f"DIAGNOSED_ON_TREATMENT ({diagnosis_yield:.1f}%)", "🩺", "#059669", "#D1FAE5")
+
+    # --------------------------------------------------------------------------
+    # MAIN NAVIGATION TABS
+    # --------------------------------------------------------------------------
+    tab_hwc, tab_dist, tab_block, tab_inactive, tab_cascade, tab_export = st.tabs(
+        [
+            "📋 HWC-Wise Performance Report",
+            "🗺️ District-Wise Summary",
+            "🏢 Block-Wise Summary",
+            "⚠️ Inactive HWC Report",
+            "🔻 TB Status Continuum Analytics",
+            "📥 Export Reports",
+        ]
+    )
+
+    # ==========================================================================
+    # TAB 1: HWC-WISE PERFORMANCE REPORT
+    # ==========================================================================
+    with tab_hwc:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>📋</span> Facility-Wise Comprehensive TB Screening Report</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        report_df = hwc_matrix.copy().sort_values(by=["Total_Screening", "Total_Tested"], ascending=[False, False]).reset_index(drop=True)
+        report_df["S. No."] = report_df.index + 1
+
+        ordered_cols = [
+            "S. No.",
+            "District_Name",
+            "Block_Name",
+            "HWC_Name",
+            "CHO_Name",
+            "Screening_Status",
+            "Total_Screening",
+            "AI_Presumptive",
+            "NTEP_Presumptive",
+            "CHO_Override",
+            "Total_Presumptive",
+            "Presumptive_Open",
+            "Presumptive_Closed",
+            "Total_Tested",
+            "Total_Diagnosed",
+        ]
+        final_hwc_report = report_df[ordered_cols].rename(
+            columns={
+                "District_Name": "District",
+                "Block_Name": "Block",
+                "HWC_Name": "HWC",
+                "CHO_Name": "CHO",
+                "Screening_Status": "Screening Status",
+                "Total_Screening": "Total Screening",
+                "AI_Presumptive": "AI Presumptive",
+                "NTEP_Presumptive": "NTEP Presumptive",
+                "CHO_Override": "CHO Override",
+                "Total_Presumptive": "Total Presumptive",
+                "Presumptive_Open": "Presumptive Open",
+                "Presumptive_Closed": "Presumptive Closed",
+                "Total_Tested": "Total Tested",
+                "Total_Diagnosed": "Total Diagnosed",
+            }
+        )
+
+        search_text = st.text_input("🔍 Quick Search HWC / CHO / Block:", "", placeholder="Type name to filter...", key="search_hwc_tab")
+        if search_text.strip():
+            m = (
+                final_hwc_report["HWC"].str.contains(search_text.strip(), case=False, na=False)
+                | final_hwc_report["CHO"].str.contains(search_text.strip(), case=False, na=False)
+                | final_hwc_report["Block"].str.contains(search_text.strip(), case=False, na=False)
+            )
+            display_hwc_report = final_hwc_report[m]
+        else:
+            display_hwc_report = final_hwc_report
+
+        st.dataframe(
+            display_hwc_report.style.format(
+                {
+                    "Total Screening": "{:,}",
+                    "AI Presumptive": "{:,}",
+                    "NTEP Presumptive": "{:,}",
+                    "CHO Override": "{:,}",
+                    "Total Presumptive": "{:,}",
+                    "Presumptive Open": "{:,}",
+                    "Presumptive Closed": "{:,}",
+                    "Total Tested": "{:,}",
+                    "Total Diagnosed": "{:,}",
+                }
+            ).background_gradient(cmap="Blues", subset=["Total Screening"])
+            .background_gradient(cmap="YlOrRd", subset=["Total Presumptive"])
+            .background_gradient(cmap="Purples", subset=["Total Tested"])
+            .background_gradient(cmap="Greens", subset=["Total Diagnosed"]),
+            use_container_width=True,
+            hide_index=True,
+            height=520,
+        )
+
+    # ==========================================================================
+    # TAB 2: DISTRICT-WISE SUMMARY
+    # ==========================================================================
+    with tab_dist:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>🗺️</span> District-Level Surveillance Summary</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        dist_summary = (
+            hwc_matrix.groupby("District_Name")
+            .agg(
+                Total_HWCs=("HWC_Name", "count"),
+                Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
+                Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
+                Total_Screening=("Total_Screening", "sum"),
+                AI_Presumptive=("AI_Presumptive", "sum"),
+                NTEP_Presumptive=("NTEP_Presumptive", "sum"),
+                CHO_Override=("CHO_Override", "sum"),
+                Total_Presumptive=("Total_Presumptive", "sum"),
+                Presumptive_Open=("Presumptive_Open", "sum"),
+                Presumptive_Closed=("Presumptive_Closed", "sum"),
+                Total_Tested=("Total_Tested", "sum"),
+                Total_Diagnosed=("Total_Diagnosed", "sum"),
+            )
+            .reset_index()
+            .rename(
+                columns={
+                    "District_Name": "District Name",
+                    "Total_HWCs": "Total HWCs",
+                    "Screening_Started": "HWCs Where Screening Started",
+                    "Screening_Not_Started": "HWCs Where Screening Not Started",
+                    "Total_Screening": "Total Screening",
+                    "AI_Presumptive": "AI Presumptive",
+                    "NTEP_Presumptive": "NTEP Presumptive",
+                    "CHO_Override": "CHO Override",
+                    "Total_Presumptive": "Total Presumptive",
+                    "Presumptive_Open": "Presumptive Open",
+                    "Presumptive_Closed": "Presumptive Closed",
+                    "Total_Tested": "Total Tested",
+                    "Total_Diagnosed": "Total Diagnosed",
+                }
+            )
+        )
+
+        fig_dist = px.bar(
+            dist_summary.sort_values(by="Total Screening", ascending=False),
+            x="District Name",
+            y=["Total Screening", "Total Presumptive", "Total Tested", "Total Diagnosed"],
+            barmode="group",
+            color_discrete_sequence=["#0284C7", "#EF4444", "#7C3AED", "#059669"],
+            title="District Performance: Screening, Unique Presumptive, Completed Testing & Diagnosed",
+        )
+        fig_dist.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), height=350, margin=dict(l=10, r=10, t=30, b=10))
+        st.plotly_chart(fig_dist, use_container_width=True)
+
+        st.dataframe(
+            dist_summary.sort_values(by="Total Screening", ascending=False).style.format(
+                {
+                    "Total HWCs": "{:,}",
+                    "HWCs Where Screening Started": "{:,}",
+                    "HWCs Where Screening Not Started": "{:,}",
+                    "Total Screening": "{:,}",
+                    "AI Presumptive": "{:,}",
+                    "NTEP Presumptive": "{:,}",
+                    "CHO Override": "{:,}",
+                    "Total Presumptive": "{:,}",
+                    "Presumptive Open": "{:,}",
+                    "Presumptive Closed": "{:,}",
+                    "Total Tested": "{:,}",
+                    "Total Diagnosed": "{:,}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # ==========================================================================
+    # TAB 3: BLOCK-WISE SUMMARY
+    # ==========================================================================
+    with tab_block:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>🏢</span> Block-Level Performance & Coverage</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        block_summary = (
+            hwc_matrix.groupby(["District_Name", "Block_Name"])
+            .agg(
+                Total_HWCs=("HWC_Name", "count"),
+                Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
+                Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
+                Total_Screening=("Total_Screening", "sum"),
+                AI_Presumptive=("AI_Presumptive", "sum"),
+                NTEP_Presumptive=("NTEP_Presumptive", "sum"),
+                CHO_Override=("CHO_Override", "sum"),
+                Total_Presumptive=("Total_Presumptive", "sum"),
+                Presumptive_Open=("Presumptive_Open", "sum"),
+                Presumptive_Closed=("Presumptive_Closed", "sum"),
+                Total_Tested=("Total_Tested", "sum"),
+                Total_Diagnosed=("Total_Diagnosed", "sum"),
+            )
+            .reset_index()
+            .rename(
+                columns={
+                    "District_Name": "District Name",
+                    "Block_Name": "Block Name",
+                    "Total_HWCs": "Total HWCs",
+                    "Screening_Started": "HWCs Where Screening Started",
+                    "Screening_Not_Started": "HWCs Where Screening Not Started",
+                    "Total_Screening": "Total Screening",
+                    "AI_Presumptive": "AI Presumptive",
+                    "NTEP_Presumptive": "NTEP Presumptive",
+                    "CHO_Override": "CHO Override",
+                    "Total_Presumptive": "Total Presumptive",
+                    "Presumptive_Open": "Presumptive Open",
+                    "Presumptive_Closed": "Presumptive Closed",
+                    "Total_Tested": "Total Tested",
+                    "Total_Diagnosed": "Total Diagnosed",
+                }
+            )
+        )
+
+        st.dataframe(
+            block_summary.sort_values(by="Total Screening", ascending=False).style.format(
+                {
+                    "Total HWCs": "{:,}",
+                    "HWCs Where Screening Started": "{:,}",
+                    "HWCs Where Screening Not Started": "{:,}",
+                    "Total Screening": "{:,}",
+                    "AI Presumptive": "{:,}",
+                    "NTEP Presumptive": "{:,}",
+                    "CHO Override": "{:,}",
+                    "Total Presumptive": "{:,}",
+                    "Presumptive Open": "{:,}",
+                    "Presumptive Closed": "{:,}",
+                    "Total Tested": "{:,}",
+                    "Total Diagnosed": "{:,}",
+                }
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # ==========================================================================
+    # TAB 4: INACTIVE HWC REPORT
+    # ==========================================================================
+    with tab_inactive:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>⚠️</span> HWCs Where Screening Has Not Started</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        inactive_df = (
+            hwc_matrix[hwc_matrix["Screening_Status"] == "Screening Not Started"]
+            .sort_values(by=["District_Name", "Block_Name", "HWC_Name"])
+            .reset_index(drop=True)
+        )
+        inactive_df["S. No."] = inactive_df.index + 1
+
+        final_inactive = inactive_df[
+            ["S. No.", "District_Name", "Block_Name", "HWC_Name", "CHO_Name", "Screening_Status", "Total_Screening"]
+        ].rename(
+            columns={
+                "District_Name": "District Name",
+                "Block_Name": "Block Name",
+                "HWC_Name": "HWC Name",
+                "CHO_Name": "CHO Name",
+                "Screening_Status": "Screening Status",
+                "Total_Screening": "Total Screening",
+            }
+        )
+
+        st.info(f"📌 A total of **{len(final_inactive):,} HWCs** have not recorded any screening activity. CHO Name is designated as **Not Available**.")
+        st.dataframe(final_inactive, use_container_width=True, hide_index=True)
+
+    # ==========================================================================
+    # TAB 5: TB STATUS CONTINUUM ANALYTICS
+    # ==========================================================================
+    with tab_cascade:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>🔻</span> Presumptive Modality & Clinical Outcomes</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        col_f1, col_f2 = st.columns([5, 4])
+        with col_f1:
+            st.markdown("##### 🔻 Continuum of Care: Screening to Diagnosis Funnel")
+            funnel_df = pd.DataFrame(
+                {
+                    "Cascade Stage": [
+                        "1. Screened Population",
+                        "2. Total Unique Presumptive",
+                        "3. Presumptive Open (Nikshay Created)",
+                        "4. Total Tested (Closed + Diagnosed)",
+                        "5. Diagnosed on Treatment",
+                    ],
+                    "Beneficiaries": [total_screenings, total_presumptive, total_presumptive_open, total_tested, total_diagnosed],
+                }
+            )
+            fig_funnel = px.funnel(
+                funnel_df,
+                x="Beneficiaries",
+                y="Cascade Stage",
+                color="Cascade Stage",
+                color_discrete_sequence=["#0284C7", "#EF4444", "#2563EB", "#7C3AED", "#059669"],
+            )
+            fig_funnel.update_layout(showlegend=False, height=330, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_funnel, use_container_width=True)
+
+        with col_f2:
+            st.markdown("##### 🔬 Presumptive Identification Modalities")
+            modality_df = pd.DataFrame(
+                {
+                    "Identification Modality": [
+                        "AI Preference Presumptive (Col L)",
+                        "NTEP Presumptive (Col Q)",
+                        "CHO Clinical Override (Col BA)",
+                    ],
+                    "Cases": [total_ai_pres, total_ntep_pres, total_cho_override],
+                }
+            )
+            fig_bar = px.bar(
+                modality_df,
+                x="Identification Modality",
+                y="Cases",
+                color="Identification Modality",
+                text_auto=True,
+                color_discrete_sequence=["#8B5CF6", "#D97706", "#EC4899"],
+            )
+            fig_bar.update_layout(showlegend=False, height=330, margin=dict(l=10, r=10, t=10, b=10))
+            st.plotly_chart(fig_bar, use_container_width=True)
+
+    # ==========================================================================
+    # TAB 6: EXPORT REPORTS
+    # ==========================================================================
+    with tab_export:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>📥</span> Export Consolidated Surveillance Dossier</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        c_exp1, c_exp2 = st.columns(2)
+        with c_exp1:
+            st.markdown("##### 📑 Multi-Tab Surveillance Workbook (.xlsx)")
+            st.caption("Consolidates HWC-Wise Report, District-Wise Summary, Block-Wise Summary, and Inactive HWCs.")
+
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                final_hwc_report.to_excel(writer, sheet_name="HWC_Performance", index=False)
+                dist_summary.to_excel(writer, sheet_name="District_Summary", index=False)
+                block_summary.to_excel(writer, sheet_name="Block_Summary", index=False)
+                final_inactive.to_excel(writer, sheet_name="Inactive_HWCs", index=False)
+
+            st.download_button(
+                label="📥 Download Consolidated Workbook (.xlsx)",
+                data=buf.getvalue(),
+                file_name=f"CATB_Surveillance_Dossier_{datetime.datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+
+        with c_exp2:
+            st.markdown("##### 📄 HWC Performance Line-List (.csv)")
+            st.caption("Standard facility-level performance report in CSV format.")
+            csv_hwc = final_hwc_report.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Download HWC Performance (.csv)",
+                data=csv_hwc,
+                file_name=f"CATB_HWC_Performance_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+
+if __name__ == "__main__":
+    main()
