@@ -539,7 +539,7 @@ def main():
             """
             <div class="app-header">
                 <div>
-                    <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
+                    <h1 class="app-header-title"><span>🩺</span> CATB Insights (Screening & Clinical Surveillance Platform)</h1>
                     <div class="app-header-subtitle">Active Case Finding (ACF) Intelligence, AI Triage & Nikshay Continuum of Care</div>
                 </div>
                 <div class="system-status-pill">
@@ -766,7 +766,7 @@ def main():
         f"""
         <div class="app-header">
             <div>
-                <h1 class="app-header-title"><span>🩺</span> CATB Screening & Clinical Surveillance Platform</h1>
+                <h1 class="app-header-title"><span>🩺</span> CATB Insights (Screening & Clinical Surveillance Platform)</h1>
                 <div class="app-header-subtitle">
                     Jurisdiction: <b>{f"{len(sel_districts)} Districts Selected" if sel_districts else "All Monitored Districts"}</b> &nbsp;|&nbsp; 
                     Master HWCs: <b>{total_hwcs:,} Entries (Column E)</b> &nbsp;|&nbsp; 
