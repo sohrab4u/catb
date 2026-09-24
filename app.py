@@ -1,23 +1,16 @@
 """
 ================================================================================
-CATB Screening & Surveillance Analytics Platform (NTEP-Only Enhanced Edition)
+CATB Screening & Surveillance Analytics Platform (Enterprise Scroll Edition)
 ================================================================================
 Enterprise TB Active Case Finding surveillance system featuring:
-- AI & NTEP Presumptive Breakdown:
-  * Column L: AI Preference Presumptive
-  * Column Q: NTEP Presumptive
-  * NTEP-Only Presumptive: NTEP Result = 'Presumptive' & AI Preference != 'Presumptive'
-  * AI + NTEP Both Presumptive: Overlap metric
-  * Column BA: CHO Clinical Override Presumptive
-  * Total Unique Presumptive: Strict deduplicated union
-- TB Status Progression (Column T):
-  * PRESUMPTIVE_OPEN -> Presumptive Open / Nikshay Created
-  * PRESUMPTIVE_CLOSED -> Presumptive Closed / Testing Completed
-  * DIAGNOSED_ON_TREATMENT -> Total Diagnosed
-  * Total Tested = PRESUMPTIVE_CLOSED + DIAGNOSED_ON_TREATMENT
-- Complete HWC Master List Integration (District + Block + HWC composite key)
+- Horizontal scrolling navigation tab bar ensuring all reports are accessible on any device
+- Full-dashboard scroll management for filters, dataframes, and analytical matrices
+- Authoritative HWC Master Hierarchy (Column E) as the absolute source of truth
 - Frontline CHO Name mapped from Column G of the Screening Data Sheet
-- High-visibility compact sidebar and 100% Streamlit Cloud compatibility
+- Earliest Screening Started Date for each HWC mapped from Column A (Reg Date)
+- Symptomatic vs. Asymptomatic Clinical Presentation Analysis (Column AC: 'Type')
+- AI & NTEP Presumptive Breakdown (Col L, Col Q, Overlap, Col BA Override, Unique Total)
+- TB Status Progression (Column T: Open, Closed, Tested, Diagnosed)
 """
 
 import datetime
@@ -31,7 +24,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # ------------------------------------------------------------------------------
-# 1. PAGE SETUP & COMPACT ENTERPRISE CSS
+# 1. PAGE SETUP & ENHANCED SCROLLABLE ENTERPRISE CSS
 # ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="CATB Screening & Surveillance Portal",
@@ -48,22 +41,89 @@ ENTERPRISE_THEME_CSS = """
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
+    /* Container Optimization */
     .block-container {
         padding-top: 1rem;
         padding-bottom: 2rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
         max-width: 100% !important;
     }
 
+    /* ---------------- 1. TAB HORIZONTAL SCROLLING ---------------- */
+    .stTabs [data-baseweb="tab-list"] {
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        white-space: nowrap !important;
+        gap: 8px !important;
+        border-bottom: 2px solid #E2E8F0 !important;
+        padding-bottom: 6px !important;
+        padding-top: 2px !important;
+        scrollbar-width: thin !important;
+        scrollbar-color: #0284C7 #F1F5F9 !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {
+        height: 6px !important;
+    }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-track {
+        background: #F1F5F9 !important;
+        border-radius: 9999px !important;
+    }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb {
+        background: #94A3B8 !important;
+        border-radius: 9999px !important;
+    }
+    .stTabs [data-baseweb="tab-list"]::-webkit-scrollbar-thumb:hover {
+        background: #0284C7 !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        flex-shrink: 0 !important;
+        white-space: nowrap !important;
+        border-radius: 8px !important;
+        padding: 8px 16px !important;
+        font-weight: 600 !important;
+        font-size: 0.85rem !important;
+        color: #475569 !important;
+        background-color: #F8FAFC !important;
+        border: 1px solid #E2E8F0 !important;
+        transition: all 0.15s ease-in-out !important;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #F1F5F9 !important;
+        color: #0F172A !important;
+        border-color: #CBD5E1 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #0284C7 !important;
+        color: #FFFFFF !important;
+        border-color: #0284C7 !important;
+        box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2) !important;
+    }
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+
+    /* ---------------- 2. SIDEBAR SCROLL & PADDING ---------------- */
     [data-testid="stSidebar"] {
         background-color: #F8FAFC !important;
         border-right: 1.5px solid #E2E8F0 !important;
     }
-    [data-testid="stSidebar"] > div:first-child {
+    [data-testid="stSidebarContent"] {
         padding-top: 0.6rem !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
+        overflow-y: auto !important;
+        scrollbar-width: thin !important;
+    }
+    [data-testid="stSidebarContent"]::-webkit-scrollbar {
+        width: 5px !important;
+    }
+    [data-testid="stSidebarContent"]::-webkit-scrollbar-thumb {
+        background: #CBD5E1 !important;
+        border-radius: 9999px !important;
     }
     
     .sidebar-brand {
@@ -115,6 +175,7 @@ ENTERPRISE_THEME_CSS = """
         gap: 4px;
     }
 
+    /* Filter Input Containers */
     [data-testid="stMultiSelect"] > div,
     [data-testid="stDateInput"] > div,
     [data-testid="stSelectbox"] > div {
@@ -140,6 +201,7 @@ ENTERPRISE_THEME_CSS = """
         padding: 1px 5px !important;
     }
 
+    /* Compact Upload Boxes */
     [data-testid="stFileUploaderInstructions"],
     [data-testid="stFileUploaderDropzoneInstructions"] {
         display: none !important;
@@ -172,6 +234,7 @@ ENTERPRISE_THEME_CSS = """
         margin-top: 1px !important;
     }
 
+    /* App Header Banner */
     .app-header {
         background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         padding: 14px 20px;
@@ -219,6 +282,7 @@ ENTERPRISE_THEME_CSS = """
         border-radius: 50%;
     }
 
+    /* KPI Cards */
     .kpi-grid-card {
         background: #FFFFFF;
         border-radius: 12px;
@@ -268,7 +332,7 @@ ENTERPRISE_THEME_CSS = """
         font-size: 0.9rem;
     }
     .kpi-metric-value {
-        font-size: 1.55rem;
+        font-size: 1.5rem;
         font-weight: 800;
         color: #0F172A;
         line-height: 1.15;
@@ -334,13 +398,15 @@ def make_composite_key(dist, blk, fac):
 
 
 # ------------------------------------------------------------------------------
-# 3. DATA STANDARDIZATION & OVERLAP DERIVATION ENGINE
+# 3. DATA STANDARDIZATION & DERIVATION ENGINE
 # ------------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=None, file_hier_name=None):
     """
     Ingests Screening Data Sheet and authoritative HWC Master Hierarchy.
     Calculates:
+    - Earliest Screening Date (Column A: 'Reg Date')
+    - Symptomatic vs. Asymptomatic: Column AC ('Type')
     - AI Presumptive (Column L == 'presumptive')
     - NTEP Presumptive (Column Q == 'presumptive')
     - NTEP-Only Presumptive (Column Q == 'presumptive' AND Column L != 'presumptive')
@@ -356,7 +422,12 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
 
     cols_all = list(df_all.columns)
 
-    c_date = detect_field(cols_all, ["reg date", "date", "created at", "screening date"])
+    # Column A (Index 0) or detected Registration Date
+    if len(cols_all) > 0 and "date" in clean_header(str(cols_all[0])):
+        c_date = cols_all[0]
+    else:
+        c_date = detect_field(cols_all, ["reg date", "date", "created at", "screening date"])
+
     c_id = detect_field(cols_all, ["id", "uuid", "patient id", "beneficiary id"])
     c_dist = detect_field(cols_all, ["district", "district name"])
     c_block = detect_field(cols_all, ["block", "block name", "tehsil"])
@@ -391,6 +462,12 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     else:
         c_status = detect_field(cols_all, ["tb status", "tb_status", "status"])
 
+    # Column AC (Index 28) - Type (Symptomatic vs. Asymptomatic)
+    if len(cols_all) > 28 and "type" in clean_header(str(cols_all[28])):
+        c_type = cols_all[28]
+    else:
+        c_type = detect_field(cols_all, ["type", "patient type", "symptom type", "presentation type"])
+
     # Column BA (Index 52) - Overrule by HWC
     if len(cols_all) > 52 and ("overrule" in clean_header(str(cols_all[52])) or "hwc" in clean_header(str(cols_all[52]))):
         c_overrule = cols_all[52]
@@ -419,7 +496,12 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["str_id"] = df[c_id].astype(str).str.strip() if c_id else df.index.astype(str)
     df["composite_key"] = df.apply(lambda r: make_composite_key(r["District_Clean"], r["Block_Clean"], r["Facility_Clean"]), axis=1)
 
-    # 1. AI Preference & NTEP Result Normalization
+    # 1. Symptomatic vs. Asymptomatic Classification (Column AC: 'Type')
+    type_series = df[c_type].fillna("").astype(str).str.strip().str.lower() if c_type and c_type in df.columns else pd.Series([""] * len(df))
+    df["is_asymptomatic"] = (type_series.str.contains("asymp") | type_series.str.contains("assymp")).astype(int)
+    df["is_symptomatic"] = ((type_series.str.contains("symp")) & (df["is_asymptomatic"] == 0)).astype(int)
+
+    # 2. AI Preference & NTEP Result Normalization
     ai_series = df[c_ai].fillna("").astype(str).str.strip().str.lower() if c_ai and c_ai in df.columns else pd.Series([""] * len(df))
     ntep_series = df[c_ntep].fillna("").astype(str).str.strip().str.lower() if c_ntep and c_ntep in df.columns else pd.Series([""] * len(df))
 
@@ -434,17 +516,15 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["is_ntep_pres"] = (ntep_series == "presumptive").astype(int)
     df["is_both_pres"] = ((df["is_ai_pres"] == 1) & (df["is_ntep_pres"] == 1)).astype(int)
     df["is_ai_only"] = ((df["is_ai_pres"] == 1) & (df["is_ntep_pres"] == 0)).astype(int)
-    
-    # NEW METRIC: NTEP Result = 'Presumptive' AND AI Preference != 'Presumptive'
     df["is_ntep_only"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 1)).astype(int)
 
-    # CHO Override Presumptive (AI Non-Presumptive AND NTEP Non-Presumptive AND Overrule == 1)
+    # CHO Override Presumptive
     df["is_cho_override"] = ((df["is_ai_pres"] == 0) & (df["is_ntep_pres"] == 0) & is_ovr_active).astype(int)
 
-    # Total Unique Presumptive: Deduplicated union of AI, NTEP, and CHO Override
+    # Total Unique Presumptive
     df["is_total_presumptive"] = ((df["is_ai_pres"] == 1) | (df["is_ntep_pres"] == 1) | (df["is_cho_override"] == 1)).astype(int)
 
-    # 2. TB Status Progression (Column T)
+    # 3. TB Status Progression (Column T)
     status_series = df[c_status].fillna("").astype(str).str.strip().str.upper() if c_status and c_status in df.columns else pd.Series([""] * len(df))
 
     df["is_presumptive_open"] = (status_series == "PRESUMPTIVE_OPEN").astype(int)
@@ -452,7 +532,7 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["is_diagnosed"] = (status_series == "DIAGNOSED_ON_TREATMENT").astype(int)
     df["is_tested"] = (status_series.isin(["PRESUMPTIVE_CLOSED", "DIAGNOSED_ON_TREATMENT"])).astype(int)
 
-    # 3. Master Hierarchy Integration
+    # 4. Master Hierarchy Integration (Retain EVERY single row, no deduplication)
     df_master_hwc = None
     if file_hier_bytes:
         try:
@@ -477,7 +557,9 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
                 df_h["Block_Clean"] = df_h[h_block].fillna("Unknown").astype(str).str.strip().str.title() if h_block else "Unknown"
 
                 df_h["composite_key"] = df_h.apply(lambda r: make_composite_key(r["District_Clean"], r["Block_Clean"], r["Facility_Clean"]), axis=1)
-                df_master_hwc = df_h[["District_Clean", "Block_Clean", "Facility_Clean", "composite_key"]].drop_duplicates(subset=["composite_key"]).copy()
+                # Keep original row identity without dropping duplicates
+                df_h["master_row_id"] = np.arange(1, len(df_h) + 1)
+                df_master_hwc = df_h.copy()
         except Exception:
             pass
 
@@ -559,7 +641,7 @@ def main():
         return
 
     # Ingest Datasets
-    with st.spinner("⚡ Processing Screening Data Sheet & calculating AI/NTEP concordance..."):
+    with st.spinner("⚡ Processing Screening Data Sheet & calculating clinical indicators..."):
         df_screening, df_master_hwc = load_and_standardize_data(
             up_all.getvalue(),
             up_all.name,
@@ -673,6 +755,7 @@ def main():
             .drop_duplicates(subset=["composite_key"])
             .copy()
         )
+        base_hwc["master_row_id"] = np.arange(1, len(base_hwc) + 1)
         if sel_districts:
             base_hwc = base_hwc[base_hwc["District_Clean"].isin(sel_districts)]
         if sel_blocks:
@@ -688,10 +771,24 @@ def main():
         .rename(columns={"CHO_Clean": "Active_CHO_Name"})
     )
 
+    # --------------------------------------------------------------------------
+    # EARLIEST SCREENING DATE CALCULATION (COLUMN A: REG DATE ACROSS ALL CHOS)
+    # --------------------------------------------------------------------------
+    earliest_date_mapping = (
+        df_screening.dropna(subset=["reg_date_clean"])
+        .groupby("composite_key")["reg_date_clean"]
+        .min()
+        .reset_index()
+        .rename(columns={"reg_date_clean": "Earliest_Screening_Date"})
+    )
+    earliest_date_mapping["Earliest_Screening_Date_Str"] = earliest_date_mapping["Earliest_Screening_Date"].dt.strftime("%d-%b-%Y")
+
     screen_summary = (
         f_screen.groupby("composite_key")
         .agg(
             Total_Screening=("composite_key", "count"),
+            Total_Symptomatic=("is_symptomatic", "sum"),
+            Total_Asymptomatic=("is_asymptomatic", "sum"),
             AI_Presumptive=("is_ai_pres", "sum"),
             NTEP_Presumptive=("is_ntep_pres", "sum"),
             NTEP_Only_Presumptive=("is_ntep_only", "sum"),
@@ -702,14 +799,19 @@ def main():
             Presumptive_Closed=("is_presumptive_closed", "sum"),
             Total_Tested=("is_tested", "sum"),
             Total_Diagnosed=("is_diagnosed", "sum"),
+            District_Screen=("District_Clean", "first"),
+            Block_Screen=("Block_Clean", "first"),
         )
         .reset_index()
     )
 
     hwc_matrix = pd.merge(base_hwc, screen_summary, on="composite_key", how="left")
     hwc_matrix = pd.merge(hwc_matrix, cho_mapping, on="composite_key", how="left")
+    hwc_matrix = pd.merge(hwc_matrix, earliest_date_mapping, on="composite_key", how="left")
 
     hwc_matrix["Total_Screening"] = hwc_matrix["Total_Screening"].fillna(0).astype(int)
+    hwc_matrix["Total_Symptomatic"] = hwc_matrix["Total_Symptomatic"].fillna(0).astype(int)
+    hwc_matrix["Total_Asymptomatic"] = hwc_matrix["Total_Asymptomatic"].fillna(0).astype(int)
     hwc_matrix["AI_Presumptive"] = hwc_matrix["AI_Presumptive"].fillna(0).astype(int)
     hwc_matrix["NTEP_Presumptive"] = hwc_matrix["NTEP_Presumptive"].fillna(0).astype(int)
     hwc_matrix["NTEP_Only_Presumptive"] = hwc_matrix["NTEP_Only_Presumptive"].fillna(0).astype(int)
@@ -730,6 +832,10 @@ def main():
 
     hwc_matrix["Screening_Status"] = np.where(hwc_matrix["Total_Screening"] > 0, "Screening Started", "Screening Not Started")
 
+    # Format Screening Started Date: If screening started, display date; otherwise "Not Available"
+    hwc_matrix["Screening_Started_Date"] = hwc_matrix["Earliest_Screening_Date_Str"].fillna("Not Available")
+    hwc_matrix.loc[hwc_matrix["Total_Screening"] == 0, "Screening_Started_Date"] = "Not Available"
+
     if sel_chos:
         hwc_matrix = hwc_matrix[hwc_matrix["CHO_Name"].isin(sel_chos)]
 
@@ -741,6 +847,9 @@ def main():
     screening_not_started_hwcs = int((hwc_matrix["Screening_Status"] == "Screening Not Started").sum())
 
     total_screenings = int(hwc_matrix["Total_Screening"].sum())
+    total_symptomatic = int(hwc_matrix["Total_Symptomatic"].sum())
+    total_asymptomatic = int(hwc_matrix["Total_Asymptomatic"].sum())
+
     total_ai_pres = int(hwc_matrix["AI_Presumptive"].sum())
     total_ntep_pres = int(hwc_matrix["NTEP_Presumptive"].sum())
     total_ntep_only_pres = int(hwc_matrix["NTEP_Only_Presumptive"].sum())
@@ -753,7 +862,10 @@ def main():
     total_tested = int(hwc_matrix["Total_Tested"].sum())
     total_diagnosed = int(hwc_matrix["Total_Diagnosed"].sum())
 
-    # Agreement metrics
+    # Percentages
+    pct_symptomatic = (total_symptomatic / max(total_screenings, 1)) * 100
+    pct_asymptomatic = (total_asymptomatic / max(total_screenings, 1)) * 100
+
     ai_only_pres = int((f_screen["is_ai_only"]).sum())
     both_non_pres = int(((f_screen["is_ai_pres"] == 0) & (f_screen["is_ntep_pres"] == 0)).sum())
     concordance_rate = ((total_both_pres + both_non_pres) / max(total_screenings, 1)) * 100
@@ -787,41 +899,44 @@ def main():
     )
 
     # --------------------------------------------------------------------------
-    # DASHBOARD KPI CARDS SECTION (3 THEMATIC CATEGORIES)
+    # DASHBOARD KPI CARDS SECTION (SCREENING, CLINICAL TYPE, PRESUMPTIVE, PROGRESSION)
     # --------------------------------------------------------------------------
-    st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🏛️</span> 1. Screening Overview & Facility Operational Status</div></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4)
-    render_enterprise_kpi(c1, "Total HWCs", f"{total_hwcs:,}", "Master Hierarchy (Column E)", "🏥", "#0284C7", "#E0F2FE")
+    st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🏛️</span> 1. Screening Overview & Patient Presentation</div></div>', unsafe_allow_html=True)
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    render_enterprise_kpi(c1, "Total HWCs", f"{total_hwcs:,}", "Master Directory (Col E)", "🏥", "#0284C7", "#E0F2FE")
     render_enterprise_kpi(c2, "Screening Started", f"{screening_started_hwcs:,}", f"{(screening_started_hwcs/max(total_hwcs,1)*100):.1f}% active facilities", "✅", "#16A34A", "#DCFCE7")
     render_enterprise_kpi(c3, "Screening Not Started", f"{screening_not_started_hwcs:,}", f"{(screening_not_started_hwcs/max(total_hwcs,1)*100):.1f}% inactive facilities", "⏳", "#DC2626", "#FEE2E2")
     render_enterprise_kpi(c4, "Total Screening", f"{total_screenings:,}", "Evaluated individuals", "📋", "#0D9488", "#CCFBF1")
+    render_enterprise_kpi(c5, "Symptomatic Patients", f"{total_symptomatic:,}", f"{pct_symptomatic:.1f}% of screened (Col AC)", "🤒", "#D97706", "#FEF3C7")
+    render_enterprise_kpi(c6, "Asymptomatic Patients", f"{total_asymptomatic:,}", f"{pct_asymptomatic:.1f}% of screened (Col AC)", "🛡️", "#0369A1", "#E0F2FE")
 
     # Section 2: Presumptive Classification Breakdown with 6 KPI Cards (Including NTEP-Only)
     st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>🔬</span> 2. Presumptive Classification Breakdown & Overlap Analysis</div></div>', unsafe_allow_html=True)
-    c5, c6, c7, c8, c9, c10 = st.columns(6)
-    render_enterprise_kpi(c5, "AI Preference Presumptive", f"{total_ai_pres:,}", "AI algorithm (Col L)", "🤖", "#8B5CF6", "#F3E8FF")
-    render_enterprise_kpi(c6, "NTEP Presumptive", f"{total_ntep_pres:,}", "Standard protocol (Col Q)", "📋", "#D97706", "#FEF3C7")
-    render_enterprise_kpi(c7, "NTEP-Only Presumptive", f"{total_ntep_only_pres:,}", "NTEP (+), AI (-)", "🔬", "#EA580C", "#FFEDD5")
-    render_enterprise_kpi(c8, "AI + NTEP Both Presumptive", f"{total_both_pres:,}", "Dual identified overlap", "🤝", "#0284C7", "#E0F2FE")
-    render_enterprise_kpi(c9, "CHO Override Presumptive", f"{total_cho_override:,}", "Frontline override (Col BA)", "👩‍⚕️", "#EC4899", "#FCE7F3")
-    render_enterprise_kpi(c10, "Total Unique Presumptive", f"{total_presumptive:,}", f"Deduplicated Yield: {pres_yield:.1f}%", "⚠️", "#EF4444", "#FEE2E2")
+    c7, c8, c9, c10, c11, c12 = st.columns(6)
+    render_enterprise_kpi(c7, "AI Preference Presumptive", f"{total_ai_pres:,}", "AI algorithm (Col L)", "🤖", "#8B5CF6", "#F3E8FF")
+    render_enterprise_kpi(c8, "NTEP Presumptive", f"{total_ntep_pres:,}", "Standard protocol (Col Q)", "📋", "#D97706", "#FEF3C7")
+    render_enterprise_kpi(c9, "NTEP-Only Presumptive", f"{total_ntep_only_pres:,}", "NTEP (+), AI (-)", "🔬", "#EA580C", "#FFEDD5")
+    render_enterprise_kpi(c10, "AI + NTEP Both Presumptive", f"{total_both_pres:,}", "Dual identified overlap", "🤝", "#0284C7", "#E0F2FE")
+    render_enterprise_kpi(c11, "CHO Override Presumptive", f"{total_cho_override:,}", "Frontline override (Col BA)", "👩‍⚕️", "#EC4899", "#FCE7F3")
+    render_enterprise_kpi(c12, "Total Unique Presumptive", f"{total_presumptive:,}", f"Deduplicated Yield: {pres_yield:.1f}%", "⚠️", "#EF4444", "#FEE2E2")
 
     st.markdown('<div class="section-title-wrap"><div class="section-title-text"><span>📈</span> 3. TB Case Progression & Clinical Outcomes</div></div>', unsafe_allow_html=True)
-    c11, c12, c13, c14 = st.columns(4)
-    render_enterprise_kpi(c11, "Presumptive Open", f"{total_presumptive_open:,}", "PRESUMPTIVE_OPEN (Nikshay Created)", "🆔", "#2563EB", "#DBEAFE")
-    render_enterprise_kpi(c12, "Presumptive Closed", f"{total_presumptive_closed:,}", "PRESUMPTIVE_CLOSED (Negative/Completed)", "🔒", "#475569", "#F1F5F9")
-    render_enterprise_kpi(c13, "Total Tested", f"{total_tested:,}", f"Closed ({total_presumptive_closed}) + Diagnosed ({total_diagnosed})", "🧪", "#7C3AED", "#EDE9FE")
-    render_enterprise_kpi(c14, "Total Diagnosed", f"{total_diagnosed:,}", f"DIAGNOSED_ON_TREATMENT ({diagnosis_yield:.1f}%)", "🩺", "#059669", "#D1FAE5")
+    c13, c14, c15, c16 = st.columns(4)
+    render_enterprise_kpi(c13, "Presumptive Open", f"{total_presumptive_open:,}", "PRESUMPTIVE_OPEN (Nikshay Created)", "🆔", "#2563EB", "#DBEAFE")
+    render_enterprise_kpi(c14, "Presumptive Closed", f"{total_presumptive_closed:,}", "PRESUMPTIVE_CLOSED (Negative/Completed)", "🔒", "#475569", "#F1F5F9")
+    render_enterprise_kpi(c15, "Total Tested", f"{total_tested:,}", f"Closed ({total_presumptive_closed}) + Diagnosed ({total_diagnosed})", "🧪", "#7C3AED", "#EDE9FE")
+    render_enterprise_kpi(c16, "Total Diagnosed", f"{total_diagnosed:,}", f"DIAGNOSED_ON_TREATMENT ({diagnosis_yield:.1f}%)", "🩺", "#059669", "#D1FAE5")
 
     # --------------------------------------------------------------------------
-    # MAIN NAVIGATION TABS
+    # MAIN NAVIGATION TABS (ENHANCED WITH NATIVE HORIZONTAL SMOOTH SCROLLING)
     # --------------------------------------------------------------------------
-    tab_hwc, tab_dist, tab_block, tab_inactive, tab_agreement, tab_cascade, tab_export = st.tabs(
+    tab_hwc, tab_dist, tab_block, tab_inactive, tab_symptom, tab_agreement, tab_cascade, tab_export = st.tabs(
         [
             "📋 HWC-Wise Performance Report",
             "🗺️ District-Wise Summary",
             "🏢 Block-Wise Summary",
             "⚠️ Inactive HWC Report",
+            "🤒 Symptomatic vs Asymptomatic",
             "🤝 AI vs NTEP Agreement Analysis",
             "🔻 TB Status Continuum Analytics",
             "📥 Export Reports",
@@ -829,7 +944,7 @@ def main():
     )
 
     # ==========================================================================
-    # TAB 1: HWC-WISE PERFORMANCE REPORT (WITH NTEP-ONLY PRESUMPTIVE COLUMN)
+    # TAB 1: HWC-WISE PERFORMANCE REPORT (WITH SCREENING STARTED DATE AS LAST COL)
     # ==========================================================================
     with tab_hwc:
         st.markdown(
@@ -852,6 +967,8 @@ def main():
             "CHO_Name",
             "Screening_Status",
             "Total_Screening",
+            "Total_Symptomatic",
+            "Total_Asymptomatic",
             "AI_Presumptive",
             "NTEP_Presumptive",
             "NTEP_Only_Presumptive",
@@ -862,6 +979,7 @@ def main():
             "Presumptive_Closed",
             "Total_Tested",
             "Total_Diagnosed",
+            "Screening_Started_Date",
         ]
         final_hwc_report = report_df[ordered_cols].rename(
             columns={
@@ -871,6 +989,8 @@ def main():
                 "CHO_Name": "CHO",
                 "Screening_Status": "Screening Status",
                 "Total_Screening": "Total Screening",
+                "Total_Symptomatic": "Symptomatic",
+                "Total_Asymptomatic": "Asymptomatic",
                 "AI_Presumptive": "AI Presumptive",
                 "NTEP_Presumptive": "NTEP Presumptive",
                 "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
@@ -881,6 +1001,7 @@ def main():
                 "Presumptive_Closed": "Presumptive Closed",
                 "Total_Tested": "Total Tested",
                 "Total_Diagnosed": "Total Diagnosed",
+                "Screening_Started_Date": "Screening Started Date",
             }
         )
 
@@ -899,6 +1020,8 @@ def main():
             display_hwc_report.style.format(
                 {
                     "Total Screening": "{:,}",
+                    "Symptomatic": "{:,}",
+                    "Asymptomatic": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
                     "NTEP-Only Presumptive": "{:,}",
@@ -936,6 +1059,8 @@ def main():
                 Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
                 Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
                 Total_Screening=("Total_Screening", "sum"),
+                Total_Symptomatic=("Total_Symptomatic", "sum"),
+                Total_Asymptomatic=("Total_Asymptomatic", "sum"),
                 AI_Presumptive=("AI_Presumptive", "sum"),
                 NTEP_Presumptive=("NTEP_Presumptive", "sum"),
                 NTEP_Only_Presumptive=("NTEP_Only_Presumptive", "sum"),
@@ -955,6 +1080,8 @@ def main():
                     "Screening_Started": "HWCs Where Screening Started",
                     "Screening_Not_Started": "HWCs Where Screening Not Started",
                     "Total_Screening": "Total Screening",
+                    "Total_Symptomatic": "Symptomatic",
+                    "Total_Asymptomatic": "Asymptomatic",
                     "AI_Presumptive": "AI Presumptive",
                     "NTEP_Presumptive": "NTEP Presumptive",
                     "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
@@ -972,10 +1099,10 @@ def main():
         fig_dist = px.bar(
             dist_summary.sort_values(by="Total Screening", ascending=False),
             x="District Name",
-            y=["Total Screening", "Total Unique Presumptive", "NTEP-Only Presumptive", "Total Tested", "Total Diagnosed"],
+            y=["Total Screening", "Symptomatic", "Asymptomatic", "Total Unique Presumptive", "Total Tested", "Total Diagnosed"],
             barmode="group",
-            color_discrete_sequence=["#0284C7", "#EF4444", "#EA580C", "#7C3AED", "#059669"],
-            title="District Performance: Screening, Presumptive Breakdown, NTEP-Only & Diagnosis",
+            color_discrete_sequence=["#0284C7", "#D97706", "#0369A1", "#EF4444", "#7C3AED", "#059669"],
+            title="District Performance: Screening, Symptomatic/Asymptomatic, Presumptive & Diagnosis",
         )
         fig_dist.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), height=350, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig_dist, use_container_width=True)
@@ -987,6 +1114,8 @@ def main():
                     "HWCs Where Screening Started": "{:,}",
                     "HWCs Where Screening Not Started": "{:,}",
                     "Total Screening": "{:,}",
+                    "Symptomatic": "{:,}",
+                    "Asymptomatic": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
                     "NTEP-Only Presumptive": "{:,}",
@@ -1023,6 +1152,8 @@ def main():
                 Screening_Started=("Screening_Status", lambda s: (s == "Screening Started").sum()),
                 Screening_Not_Started=("Screening_Status", lambda s: (s == "Screening Not Started").sum()),
                 Total_Screening=("Total_Screening", "sum"),
+                Total_Symptomatic=("Total_Symptomatic", "sum"),
+                Total_Asymptomatic=("Total_Asymptomatic", "sum"),
                 AI_Presumptive=("AI_Presumptive", "sum"),
                 NTEP_Presumptive=("NTEP_Presumptive", "sum"),
                 NTEP_Only_Presumptive=("NTEP_Only_Presumptive", "sum"),
@@ -1043,6 +1174,8 @@ def main():
                     "Screening_Started": "HWCs Where Screening Started",
                     "Screening_Not_Started": "HWCs Where Screening Not Started",
                     "Total_Screening": "Total Screening",
+                    "Total_Symptomatic": "Symptomatic",
+                    "Total_Asymptomatic": "Asymptomatic",
                     "AI_Presumptive": "AI Presumptive",
                     "NTEP_Presumptive": "NTEP Presumptive",
                     "NTEP_Only_Presumptive": "NTEP-Only Presumptive",
@@ -1064,6 +1197,8 @@ def main():
                     "HWCs Where Screening Started": "{:,}",
                     "HWCs Where Screening Not Started": "{:,}",
                     "Total Screening": "{:,}",
+                    "Symptomatic": "{:,}",
+                    "Asymptomatic": "{:,}",
                     "AI Presumptive": "{:,}",
                     "NTEP Presumptive": "{:,}",
                     "NTEP-Only Presumptive": "{:,}",
@@ -1117,7 +1252,60 @@ def main():
         st.dataframe(final_inactive, use_container_width=True, hide_index=True)
 
     # ==========================================================================
-    # TAB 5: AI VS NTEP AGREEMENT ANALYSIS
+    # TAB 5: SYMPTOMATIC VS ASYMPTOMATIC CLINICAL ANALYSIS
+    # ==========================================================================
+    with tab_symptom:
+        st.markdown(
+            """
+            <div class="section-title-wrap">
+                <div class="section-title-text"><span>🤒</span> Symptomatic vs. Asymptomatic Patient Presentation (Column AC: 'Type')</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        symp_c1, symp_c2, symp_c3 = st.columns(3)
+        render_enterprise_kpi(symp_c1, "Total Screened Cohort", f"{total_screenings:,}", "Evaluated individuals", "📋", "#0D9488", "#CCFBF1")
+        render_enterprise_kpi(symp_c2, "Symptomatic Individuals", f"{total_symptomatic:,}", f"{pct_symptomatic:.1f}% of screened cohort", "🤒", "#D97706", "#FEF3C7")
+        render_enterprise_kpi(symp_c3, "Asymptomatic Individuals", f"{total_asymptomatic:,}", f"{pct_asymptomatic:.1f}% of screened cohort", "🛡️", "#0369A1", "#E0F2FE")
+
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+        col_s1, col_s2 = st.columns([5, 4])
+        with col_s1:
+            st.markdown("##### 📊 District-Wise Symptomatic vs. Asymptomatic Volume")
+            fig_symp_bar = px.bar(
+                dist_summary.sort_values(by="Total Screening", ascending=False),
+                x="District Name",
+                y=["Symptomatic", "Asymptomatic"],
+                barmode="group",
+                color_discrete_sequence=["#D97706", "#0369A1"],
+                title="Symptom Presentation Split by District",
+            )
+            fig_symp_bar.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1), height=340, margin=dict(l=10, r=10, t=30, b=10))
+            st.plotly_chart(fig_symp_bar, use_container_width=True)
+
+        with col_s2:
+            st.markdown("##### 🍩 Overall Clinical Presentation Distribution")
+            symp_pie_df = pd.DataFrame(
+                {
+                    "Presentation Type": ["Symptomatic", "Asymptomatic"],
+                    "Count": [total_symptomatic, total_asymptomatic],
+                }
+            )
+            fig_symp_pie = px.pie(
+                symp_pie_df,
+                names="Presentation Type",
+                values="Count",
+                hole=0.55,
+                color="Presentation Type",
+                color_discrete_map={"Symptomatic": "#D97706", "Asymptomatic": "#0369A1"},
+            )
+            fig_symp_pie.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10), legend=dict(orientation="h", yanchor="bottom", y=-0.15))
+            st.plotly_chart(fig_symp_pie, use_container_width=True)
+
+    # ==========================================================================
+    # TAB 6: AI VS NTEP AGREEMENT ANALYSIS
     # ==========================================================================
     with tab_agreement:
         st.markdown(
@@ -1210,7 +1398,7 @@ def main():
         )
 
     # ==========================================================================
-    # TAB 6: TB STATUS CONTINUUM ANALYTICS
+    # TAB 7: TB STATUS CONTINUUM ANALYTICS
     # ==========================================================================
     with tab_cascade:
         st.markdown(
@@ -1273,7 +1461,7 @@ def main():
             st.plotly_chart(fig_bar, use_container_width=True)
 
     # ==========================================================================
-    # TAB 7: EXPORT REPORTS
+    # TAB 8: EXPORT REPORTS
     # ==========================================================================
     with tab_export:
         st.markdown(
@@ -1288,7 +1476,7 @@ def main():
         c_exp1, c_exp2 = st.columns(2)
         with c_exp1:
             st.markdown("##### 📑 Multi-Tab Surveillance Workbook (.xlsx)")
-            st.caption("Consolidates HWC-Wise Report, District-Wise Summary, Block-Wise Summary, and Inactive HWCs.")
+            st.caption("Consolidates HWC-Wise Report, District Summary, Block Summary, and Inactive HWCs.")
 
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine="openpyxl") as writer:
