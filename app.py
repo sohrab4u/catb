@@ -1,10 +1,12 @@
 """
 ================================================================================
-CATB Screening & Surveillance Analytics Platform (Enterprise Scroll Edition)
+CATB Screening & Surveillance Analytics Platform (Universal Scroll Edition)
 ================================================================================
 Enterprise TB Active Case Finding surveillance system featuring:
-- Horizontal scrolling navigation tab bar ensuring all reports are accessible on any device
-- Full-dashboard scroll management for filters, dataframes, and analytical matrices
+- Universal horizontal & vertical scrolling across all tabs, cards, tables & filters
+- Navigation tab bar with native horizontal smooth-scroll (no hidden tabs)
+- Horizontal scroll wrappers for multi-column KPI rows on all screen breakpoints
+- Independent smooth-scroll sidebar with constrained multi-select tag containers
 - Authoritative HWC Master Hierarchy (Column E) as the absolute source of truth
 - Frontline CHO Name mapped from Column G of the Screening Data Sheet
 - Earliest Screening Started Date for each HWC mapped from Column A (Reg Date)
@@ -50,7 +52,7 @@ ENTERPRISE_THEME_CSS = """
         max-width: 100% !important;
     }
 
-    /* ---------------- 1. TAB HORIZONTAL SCROLLING ---------------- */
+    /* ---------------- 1. NAVIGATION TAB HORIZONTAL SCROLLING ---------------- */
     .stTabs [data-baseweb="tab-list"] {
         display: flex !important;
         flex-wrap: nowrap !important;
@@ -59,8 +61,8 @@ ENTERPRISE_THEME_CSS = """
         white-space: nowrap !important;
         gap: 8px !important;
         border-bottom: 2px solid #E2E8F0 !important;
-        padding-bottom: 6px !important;
-        padding-top: 2px !important;
+        padding-bottom: 8px !important;
+        padding-top: 4px !important;
         scrollbar-width: thin !important;
         scrollbar-color: #0284C7 #F1F5F9 !important;
         -webkit-overflow-scrolling: touch !important;
@@ -83,7 +85,7 @@ ENTERPRISE_THEME_CSS = """
         flex-shrink: 0 !important;
         white-space: nowrap !important;
         border-radius: 8px !important;
-        padding: 8px 16px !important;
+        padding: 8px 18px !important;
         font-weight: 600 !important;
         font-size: 0.85rem !important;
         color: #475569 !important;
@@ -106,7 +108,38 @@ ENTERPRISE_THEME_CSS = """
         display: none !important;
     }
 
-    /* ---------------- 2. SIDEBAR SCROLL & PADDING ---------------- */
+    /* ---------------- 2. KPI CARDS HORIZONTAL SCROLL WRAPPER ---------------- */
+    .kpi-scroll-container {
+        display: flex;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        gap: 12px;
+        padding-bottom: 8px;
+        margin-bottom: 8px;
+        scrollbar-width: thin;
+        scrollbar-color: #CBD5E1 #F8FAFC;
+        -webkit-overflow-scrolling: touch;
+    }
+    .kpi-scroll-container::-webkit-scrollbar {
+        height: 5px;
+    }
+    .kpi-scroll-container::-webkit-scrollbar-track {
+        background: #F8FAFC;
+        border-radius: 9999px;
+    }
+    .kpi-scroll-container::-webkit-scrollbar-thumb {
+        background: #CBD5E1;
+        border-radius: 9999px;
+    }
+    .kpi-scroll-container::-webkit-scrollbar-thumb:hover {
+        background: #94A3B8;
+    }
+    .kpi-scroll-item {
+        flex: 0 0 240px;
+        min-width: 220px;
+    }
+
+    /* ---------------- 3. SIDEBAR VERTICAL SCROLL & PADDING ---------------- */
     [data-testid="stSidebar"] {
         background-color: #F8FAFC !important;
         border-right: 1.5px solid #E2E8F0 !important;
@@ -175,7 +208,7 @@ ENTERPRISE_THEME_CSS = """
         gap: 4px;
     }
 
-    /* Filter Input Containers */
+    /* Filter Input Containers & Internal Scrollable Multi-Select */
     [data-testid="stMultiSelect"] > div,
     [data-testid="stDateInput"] > div,
     [data-testid="stSelectbox"] > div {
@@ -185,6 +218,8 @@ ENTERPRISE_THEME_CSS = """
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
         transition: all 0.2s ease-in-out !important;
         min-height: 36px !important;
+        max-height: 120px !important;
+        overflow-y: auto !important;
     }
     [data-testid="stMultiSelect"] > div:hover,
     [data-testid="stDateInput"] > div:hover,
@@ -532,7 +567,7 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
     df["is_diagnosed"] = (status_series == "DIAGNOSED_ON_TREATMENT").astype(int)
     df["is_tested"] = (status_series.isin(["PRESUMPTIVE_CLOSED", "DIAGNOSED_ON_TREATMENT"])).astype(int)
 
-    # 4. Master Hierarchy Integration (Retain EVERY single row, no deduplication)
+    # 4. Master Hierarchy Integration
     df_master_hwc = None
     if file_hier_bytes:
         try:
@@ -557,7 +592,6 @@ def load_and_standardize_data(file_all_bytes, file_all_name, file_hier_bytes=Non
                 df_h["Block_Clean"] = df_h[h_block].fillna("Unknown").astype(str).str.strip().str.title() if h_block else "Unknown"
 
                 df_h["composite_key"] = df_h.apply(lambda r: make_composite_key(r["District_Clean"], r["Block_Clean"], r["Facility_Clean"]), axis=1)
-                # Keep original row identity without dropping duplicates
                 df_h["master_row_id"] = np.arange(1, len(df_h) + 1)
                 df_master_hwc = df_h.copy()
         except Exception:
